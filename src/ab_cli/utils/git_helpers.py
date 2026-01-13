@@ -24,6 +24,8 @@ def run_git(*args, capture: bool = True, check: bool = True) -> subprocess.Compl
         cmd,
         capture_output=capture,
         text=True,
+        encoding='utf-8',
+        errors='replace',
         check=check
     )
 
