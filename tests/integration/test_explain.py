@@ -1,10 +1,12 @@
 """Integration tests for ab_cli.commands.explain module."""
+import os
 import sys
 from unittest.mock import patch
 
 import pytest
 
 from ab_cli.commands.explain import (
+    PathTraversalError,
     detect_input_type,
     extract_file_references,
     get_bash_history,
@@ -12,6 +14,7 @@ from ab_cli.commands.explain import (
     main,
     parse_file_reference,
     read_file_with_context,
+    safe_path,
 )
 
 
@@ -79,37 +82,41 @@ class TestExtractFileReferences:
         monkeypatch.chdir(tmp_path)
         (tmp_path / 'test.py').write_text('content')
 
-        result = extract_file_references("Error in 'test.py'")
-        assert 'test.py' in result
+        result = extract_file_references("Error in 'test.py'", base_dir=str(tmp_path))
+        # Result now contains absolute paths
+        assert any('test.py' in f for f in result)
 
     def test_extract_file_references_double_quotes(self, tmp_path, monkeypatch):
         """Extracts file in double quotes."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / 'test.py').write_text('content')
 
-        result = extract_file_references('Error in "test.py"')
-        assert 'test.py' in result
+        result = extract_file_references('Error in "test.py"', base_dir=str(tmp_path))
+        # Result now contains absolute paths
+        assert any('test.py' in f for f in result)
 
     def test_extract_file_references_python_traceback(self, tmp_path, monkeypatch):
         """Extracts file from Python traceback format."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / 'script.py').write_text('content')
 
-        result = extract_file_references('File "script.py", line 10')
-        assert 'script.py' in result
+        result = extract_file_references('File "script.py", line 10', base_dir=str(tmp_path))
+        # Result now contains absolute paths
+        assert any('script.py' in f for f in result)
 
     def test_extract_file_references_with_line_number(self, tmp_path, monkeypatch):
         """Extracts file with line number format."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / 'file.py').write_text('content')
 
-        result = extract_file_references('file.py:42')
-        assert 'file.py' in result
+        result = extract_file_references('file.py:42', base_dir=str(tmp_path))
+        # Result now contains absolute paths
+        assert any('file.py' in f for f in result)
 
     def test_extract_file_references_nonexistent_excluded(self):
         """Excludes non-existent files."""
         result = extract_file_references("Error in 'nonexistent12345.py'")
-        assert 'nonexistent12345.py' not in result
+        assert not any('nonexistent12345.py' in f for f in result)
 
 
 class TestReadFileWithContext:
@@ -120,7 +127,7 @@ class TestReadFileWithContext:
         test_file = tmp_path / 'test.py'
         test_file.write_text('line1\nline2\nline3\n')
 
-        result = read_file_with_context(str(test_file))
+        result = read_file_with_context(str(test_file), base_dir=str(tmp_path))
         assert 'line1' in result
         assert 'line2' in result
         assert 'line3' in result
@@ -131,7 +138,7 @@ class TestReadFileWithContext:
         lines = [f'line{i}\n' for i in range(1, 21)]
         test_file.write_text(''.join(lines))
 
-        result = read_file_with_context(str(test_file), line=10)
+        result = read_file_with_context(str(test_file), line=10, base_dir=str(tmp_path))
         # Should have marker on line 10
         assert '>>>' in result
         assert '10:' in result or '  10' in result
@@ -142,7 +149,7 @@ class TestReadFileWithContext:
         lines = [f'line{i}\n' for i in range(1, 31)]
         test_file.write_text(''.join(lines))
 
-        result = read_file_with_context(str(test_file), line=10, end_line=15)
+        result = read_file_with_context(str(test_file), line=10, end_line=15, base_dir=str(tmp_path))
         # Should include context around lines 10-15
         assert 'line10' in result
         assert 'line15' in result
@@ -158,7 +165,7 @@ class TestReadFileWithContext:
         lines = [f'line{i}\n' for i in range(1, 301)]
         test_file.write_text(''.join(lines))
 
-        result = read_file_with_context(str(test_file))
+        result = read_file_with_context(str(test_file), base_dir=str(tmp_path))
         assert 'truncated' in result.lower()
 
 
@@ -358,3 +365,135 @@ class TestMain:
                     main()
                 except SystemExit:
                     pass
+
+
+class TestSafePath:
+    """Tests for safe_path function - path traversal protection."""
+
+    def test_safe_path_valid_relative(self, tmp_path, monkeypatch):
+        """Allows valid relative paths within base directory."""
+        monkeypatch.chdir(tmp_path)
+        test_file = tmp_path / 'test.py'
+        test_file.write_text('content')
+
+        result = safe_path('test.py', str(tmp_path))
+        assert result == str(test_file)
+
+    def test_safe_path_valid_subdirectory(self, tmp_path):
+        """Allows paths in subdirectories."""
+        subdir = tmp_path / 'subdir'
+        subdir.mkdir()
+        test_file = subdir / 'test.py'
+        test_file.write_text('content')
+
+        result = safe_path('subdir/test.py', str(tmp_path))
+        assert result == str(test_file)
+
+    def test_safe_path_blocks_parent_traversal(self, tmp_path):
+        """Blocks ../etc/passwd style traversal."""
+        with pytest.raises(PathTraversalError) as exc_info:
+            safe_path('../../../etc/passwd', str(tmp_path))
+
+        assert 'Path traversal detected' in str(exc_info.value)
+
+    def test_safe_path_blocks_absolute_outside(self, tmp_path):
+        """Blocks absolute paths outside base directory."""
+        with pytest.raises(PathTraversalError) as exc_info:
+            safe_path('/etc/passwd', str(tmp_path))
+
+        assert 'Path traversal detected' in str(exc_info.value)
+
+    def test_safe_path_blocks_dot_dot_in_middle(self, tmp_path):
+        """Blocks paths with .. in the middle."""
+        subdir = tmp_path / 'subdir'
+        subdir.mkdir()
+
+        with pytest.raises(PathTraversalError) as exc_info:
+            safe_path('subdir/../../etc/passwd', str(tmp_path))
+
+        assert 'Path traversal detected' in str(exc_info.value)
+
+    def test_safe_path_uses_cwd_when_no_base(self, tmp_path, monkeypatch):
+        """Uses current working directory when base_dir not specified."""
+        monkeypatch.chdir(tmp_path)
+        test_file = tmp_path / 'test.py'
+        test_file.write_text('content')
+
+        result = safe_path('test.py')
+        assert result == str(test_file)
+
+    def test_safe_path_resolves_symlinks(self, tmp_path):
+        """Resolves symlinks to check real path."""
+        # Create a file outside base
+        outside = tmp_path.parent / 'outside_file.txt'
+        outside.write_text('secret')
+
+        # Create a symlink inside base pointing outside
+        symlink = tmp_path / 'link.txt'
+        try:
+            symlink.symlink_to(outside)
+        except OSError:
+            pytest.skip("Symlinks not supported on this system")
+
+        with pytest.raises(PathTraversalError):
+            safe_path('link.txt', str(tmp_path))
+
+        # Clean up
+        if outside.exists():
+            outside.unlink()
+
+
+class TestPathTraversalProtection:
+    """Tests for path traversal protection in file reading functions."""
+
+    def test_read_file_with_context_blocks_traversal(self, tmp_path, monkeypatch):
+        """read_file_with_context blocks path traversal attempts."""
+        monkeypatch.chdir(tmp_path)
+
+        result = read_file_with_context('../../../etc/passwd', base_dir=str(tmp_path))
+        assert 'Error' in result
+        assert 'Path traversal detected' in result
+
+    def test_read_file_with_context_allows_valid_path(self, tmp_path):
+        """read_file_with_context allows valid paths."""
+        test_file = tmp_path / 'test.py'
+        test_file.write_text('line1\nline2\n')
+
+        result = read_file_with_context('test.py', base_dir=str(tmp_path))
+        assert 'line1' in result
+        assert 'line2' in result
+        assert 'Error' not in result
+
+    def test_extract_file_references_filters_traversal(self, tmp_path, monkeypatch):
+        """extract_file_references filters out path traversal attempts."""
+        monkeypatch.chdir(tmp_path)
+
+        # Create a valid file
+        valid_file = tmp_path / 'valid.py'
+        valid_file.write_text('content')
+
+        # Text with both valid and malicious file references
+        text = "Error in 'valid.py' and '../../../etc/passwd'"
+
+        result = extract_file_references(text, base_dir=str(tmp_path))
+
+        # Should include valid file but not traversal attempt
+        assert any('valid.py' in f for f in result)
+        assert not any('passwd' in f for f in result)
+        assert not any('etc' in f for f in result)
+
+    def test_extract_file_references_filters_absolute_outside(self, tmp_path, monkeypatch):
+        """extract_file_references filters out absolute paths outside base."""
+        monkeypatch.chdir(tmp_path)
+
+        # Create a valid file
+        valid_file = tmp_path / 'app.py'
+        valid_file.write_text('content')
+
+        text = "Error in 'app.py' and '/etc/passwd'"
+
+        result = extract_file_references(text, base_dir=str(tmp_path))
+
+        # Should include valid file but not absolute path outside
+        assert any('app.py' in f for f in result)
+        assert not any('passwd' in f for f in result)

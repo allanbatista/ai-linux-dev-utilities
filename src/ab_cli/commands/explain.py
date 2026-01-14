@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 import sys
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from ab_cli.core.config import get_language
 from ab_cli.utils import (
@@ -19,6 +19,53 @@ from ab_cli.utils import (
     GREEN,
     NC,
 )
+
+
+class PathTraversalError(Exception):
+    """Raised when a path traversal attempt is detected."""
+    pass
+
+
+def safe_path(filepath: str, base_dir: Optional[str] = None) -> str:
+    """
+    Validate and resolve a file path, preventing path traversal attacks.
+
+    Args:
+        filepath: The file path to validate
+        base_dir: The base directory to restrict access to (default: cwd)
+
+    Returns:
+        The resolved absolute path if safe
+
+    Raises:
+        PathTraversalError: If the path attempts to escape base_dir
+    """
+    if base_dir is None:
+        base_dir = os.getcwd()
+
+    # Resolve both paths to absolute, normalized paths
+    base_resolved = os.path.realpath(base_dir)
+    # Join with base_dir first to handle relative paths properly
+    if os.path.isabs(filepath):
+        target_resolved = os.path.realpath(filepath)
+    else:
+        target_resolved = os.path.realpath(os.path.join(base_dir, filepath))
+
+    # Check if the resolved path is within the base directory
+    # Use os.path.commonpath to handle edge cases properly
+    try:
+        common = os.path.commonpath([base_resolved, target_resolved])
+        if common != base_resolved:
+            raise PathTraversalError(
+                f"Path traversal detected: '{filepath}' resolves outside base directory"
+            )
+    except ValueError:
+        # commonpath raises ValueError if paths are on different drives (Windows)
+        raise PathTraversalError(
+            f"Path traversal detected: '{filepath}' is on a different drive"
+        )
+
+    return target_resolved
 
 
 def get_bash_history(lines: int = 20) -> str:
@@ -52,8 +99,33 @@ def get_directory_listing(path: str = '.') -> str:
         return ""
 
 
-def extract_file_references(text: str) -> list[str]:
-    """Extract potential file references from error messages."""
+def extract_file_references(text: str, base_dir: Optional[str] = None) -> List[str]:
+    """Extract potential file references from error messages or text.
+
+    Scans the input text for patterns that commonly indicate file paths,
+    such as quoted filenames, Python traceback references, and file:line
+    patterns. Only returns files that actually exist on the filesystem
+    and are within the allowed base directory.
+
+    Args:
+        text: The input text to scan for file references. Can be an error
+            message, stack trace, log output, or any text containing
+            potential file paths.
+        base_dir: Base directory to restrict file access to. Files outside
+            this directory will be excluded. Defaults to current working
+            directory if not specified.
+
+    Returns:
+        A deduplicated list of absolute file paths that were found in the
+        text, exist on the filesystem, and are within the base directory.
+        Returns an empty list if no valid file references are found.
+
+    Examples:
+        >>> extract_file_references('File "app.py", line 42')
+        ['/path/to/app.py']  # Only if app.py exists within base_dir
+        >>> extract_file_references("Error in 'config.json':5")
+        ['/path/to/config.json']  # Only if config.json exists within base_dir
+    """
     patterns = [
         r"'([^']+\.[a-z]{1,4})'",  # 'file.py'
         r'"([^"]+\.[a-z]{1,4})"',  # "file.py"
@@ -68,22 +140,68 @@ def extract_file_references(text: str) -> list[str]:
         matches = re.findall(pattern, text)
         files.extend(matches)
 
-    # Filter to existing files
+    # Filter to existing files within the base directory
     existing = []
     for f in files:
-        if os.path.isfile(f):
-            existing.append(f)
+        try:
+            # Validate path is within base directory
+            safe_filepath = safe_path(f, base_dir)
+            if os.path.isfile(safe_filepath):
+                existing.append(safe_filepath)
+        except PathTraversalError:
+            # Skip files that would escape base directory
+            continue
     return list(set(existing))
 
 
 def read_file_with_context(filepath: str, line: Optional[int] = None,
-                           end_line: Optional[int] = None, context_lines: int = 10) -> str:
-    """Read a file, optionally focusing on specific lines with context."""
-    if not os.path.exists(filepath):
+                           end_line: Optional[int] = None, context_lines: int = 10,
+                           base_dir: Optional[str] = None) -> str:
+    """Read a file with optional line-focused context highlighting.
+
+    When line numbers are specified, returns the file content with context
+    lines before and after, marking the target lines with ">>>" markers.
+    Without line numbers, returns the entire file (truncated if too long).
+    Includes path traversal protection to prevent reading files outside
+    the allowed base directory.
+
+    Args:
+        filepath: Path to the file to read.
+        line: Optional starting line number to focus on (1-indexed).
+        end_line: Optional ending line number for a range. If None and
+            line is specified, only that single line is highlighted.
+        context_lines: Number of lines to include before and after the
+            target line(s). Defaults to 10.
+        base_dir: Base directory to restrict file access to. Files outside
+            this directory will be rejected. Defaults to current working
+            directory if not specified.
+
+    Returns:
+        The file content as a string. If line numbers are specified,
+        returns formatted output with line numbers and ">>>" markers
+        for highlighted lines. If the file exceeds 200 lines and no
+        line is specified, content is truncated with a note.
+
+        Returns an error message string if the file doesn't exist,
+        cannot be read, or is outside the allowed base directory.
+
+    Examples:
+        >>> read_file_with_context("app.py")  # Full file
+        '#!/usr/bin/env python3\\nimport sys...'
+        >>> read_file_with_context("app.py", line=42)  # Line 42 with context
+        '     32: def foo():\\n>>>   42: return bar\\n     52: ...'
+    """
+    # Validate path is within base directory
+    try:
+        safe_filepath = safe_path(filepath, base_dir)
+    except PathTraversalError as e:
+        return f"Error: {e}"
+
+    if not os.path.exists(safe_filepath):
         return f"Error: File '{filepath}' not found"
 
     try:
-        with open(filepath, 'r', errors='ignore') as f:
+        with open(safe_filepath, 'r', errors='ignore') as f:
             lines = f.readlines()
     except Exception as e:
         return f"Error reading file: {e}"
@@ -138,8 +256,32 @@ def detect_input_type(input_text: str) -> str:
     return 'concept'
 
 
-def parse_file_reference(ref: str) -> tuple[str, Optional[int], Optional[int]]:
-    """Parse file:line or file:start-end reference."""
+def parse_file_reference(ref: str) -> Tuple[str, Optional[int], Optional[int]]:
+    """Parse a file reference string into filepath and line number components.
+
+    Handles file references in the following formats:
+    - "file.py" -> (file.py, None, None)
+    - "file.py:42" -> (file.py, 42, None)
+    - "file.py:10-50" -> (file.py, 10, 50)
+
+    Args:
+        ref: A file reference string, optionally including line number
+            or line range specification after a colon.
+
+    Returns:
+        A tuple of (filepath, start_line, end_line) where:
+        - filepath: The path portion of the reference
+        - start_line: The starting line number, or None if not specified
+        - end_line: The ending line number for ranges, or None if not a range
+
+    Examples:
+        >>> parse_file_reference("script.py")
+        ('script.py', None, None)
+        >>> parse_file_reference("script.py:42")
+        ('script.py', 42, None)
+        >>> parse_file_reference("script.py:10-50")
+        ('script.py', 10, 50)
+    """
     if ':' not in ref:
         return ref, None, None
 
