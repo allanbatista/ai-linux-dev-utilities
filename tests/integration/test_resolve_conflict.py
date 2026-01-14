@@ -334,3 +334,241 @@ feature
 
             # Verify resolve_conflict_with_llm was called
             assert mock_resolve.called
+
+
+class TestComplexConflicts:
+    """Tests for complex multi-conflict scenarios."""
+
+    def test_parse_conflicts_with_complex_multiblock(self):
+        """Parses file with multiple interleaved conflict blocks."""
+        content = '''import os
+import sys
+
+<<<<<<< HEAD
+def process_data(data):
+    """Process data using method A."""
+    return data.upper()
+=======
+def process_data(data):
+    """Process data using method B."""
+    return data.lower()
+>>>>>>> feature-branch
+
+class Handler:
+<<<<<<< HEAD
+    def __init__(self):
+        self.mode = "production"
+=======
+    def __init__(self):
+        self.mode = "development"
+        self.debug = True
+>>>>>>> feature-branch
+
+    def run(self):
+<<<<<<< HEAD
+        return self.process()
+=======
+        return self.execute()
+>>>>>>> feature-branch
+'''
+        conflicts = parse_conflicts(content)
+
+        assert len(conflicts) == 3
+
+        # First conflict - function definition
+        assert 'process_data' in '\n'.join(conflicts[0]['ours'])
+        assert 'method A' in '\n'.join(conflicts[0]['ours'])
+        assert 'method B' in '\n'.join(conflicts[0]['theirs'])
+
+        # Second conflict - class init
+        assert 'production' in '\n'.join(conflicts[1]['ours'])
+        assert 'development' in '\n'.join(conflicts[1]['theirs'])
+        assert len(conflicts[1]['theirs']) > len(conflicts[1]['ours'])  # theirs has extra line
+
+        # Third conflict - method
+        assert 'process' in '\n'.join(conflicts[2]['ours'])
+        assert 'execute' in '\n'.join(conflicts[2]['theirs'])
+
+    def test_parse_conflicts_nested_braces(self):
+        """Handles conflicts with nested braces and complex syntax."""
+        content = '''<<<<<<< HEAD
+function getData() {
+    return {
+        name: "test",
+        config: {
+            enabled: true,
+            options: [1, 2, 3]
+        }
+    };
+}
+=======
+function getData() {
+    return {
+        name: "test",
+        config: {
+            enabled: false,
+            options: []
+        }
+    };
+}
+>>>>>>> feature'''
+        conflicts = parse_conflicts(content)
+
+        assert len(conflicts) == 1
+        assert 'enabled: true' in '\n'.join(conflicts[0]['ours'])
+        assert 'enabled: false' in '\n'.join(conflicts[0]['theirs'])
+
+    def test_parse_conflicts_empty_side(self):
+        """Handles conflicts where one side is empty (deletion)."""
+        content = '''<<<<<<< HEAD
+=======
+def new_function():
+    pass
+>>>>>>> feature'''
+        conflicts = parse_conflicts(content)
+
+        assert len(conflicts) == 1
+        assert len(conflicts[0]['ours']) == 0
+        assert len(conflicts[0]['theirs']) > 0
+
+    def test_parse_conflicts_both_empty(self):
+        """Handles conflicts where both sides are effectively empty."""
+        content = '''<<<<<<< HEAD
+=======
+>>>>>>> feature'''
+        conflicts = parse_conflicts(content)
+
+        assert len(conflicts) == 1
+        assert len(conflicts[0]['ours']) == 0
+        assert len(conflicts[0]['theirs']) == 0
+
+    def test_parse_conflicts_long_content(self):
+        """Handles conflicts with many lines of code."""
+        # Create a conflict with 50 lines on each side
+        ours_lines = [f'    line_ours_{i} = "value_{i}"' for i in range(50)]
+        theirs_lines = [f'    line_theirs_{i} = "different_{i}"' for i in range(50)]
+
+        content = f'''<<<<<<< HEAD
+{chr(10).join(ours_lines)}
+=======
+{chr(10).join(theirs_lines)}
+>>>>>>> feature'''
+
+        conflicts = parse_conflicts(content)
+
+        assert len(conflicts) == 1
+        assert len(conflicts[0]['ours']) == 50
+        assert len(conflicts[0]['theirs']) == 50
+
+    def test_has_conflict_markers_mixed_content(self):
+        """Detects conflict markers in mixed content."""
+        # Content with text that looks like markers but isn't complete
+        content_no_conflict = '''Some text about git:
+The <<<<<<< marker indicates the start
+But without all three markers, no conflict exists
+'''
+        assert has_conflict_markers(content_no_conflict) is False
+
+        # Content with all three markers
+        content_with_conflict = '''<<<<<<< HEAD
+version A
+=======
+version B
+>>>>>>> branch'''
+        assert has_conflict_markers(content_with_conflict) is True
+
+    def test_get_file_context_at_file_start(self, tmp_path):
+        """Gets context when conflict is at file start."""
+        test_file = tmp_path / 'test.txt'
+        content = '''<<<<<<< HEAD
+first line
+=======
+alternate first
+>>>>>>> feature
+line 5
+line 6
+line 7
+line 8
+line 9
+line 10
+'''
+        test_file.write_text(content)
+
+        conflict = {
+            'start_line': 1,
+            'end_line': 5,
+        }
+
+        before, after = get_file_context(str(test_file), conflict, context_lines=3)
+
+        # Should have empty before (conflict at start)
+        assert before == ''
+        # Should have lines after
+        assert 'line 5' in after or 'line 6' in after
+
+    def test_get_file_context_at_file_end(self, tmp_path):
+        """Gets context when conflict is at file end."""
+        test_file = tmp_path / 'test.txt'
+        content = '''line 1
+line 2
+line 3
+line 4
+line 5
+<<<<<<< HEAD
+last line ours
+=======
+last line theirs
+>>>>>>> feature
+'''
+        test_file.write_text(content)
+
+        conflict = {
+            'start_line': 6,
+            'end_line': 10,
+        }
+
+        before, after = get_file_context(str(test_file), conflict, context_lines=3)
+
+        # Should have lines before
+        assert 'line 3' in before or 'line 4' in before or 'line 5' in before
+        # After should be empty or minimal (conflict at end)
+
+    def test_apply_resolution_preserves_surrounding_content(self, tmp_path):
+        """Verifies surrounding content is preserved after resolution."""
+        test_file = tmp_path / 'test.txt'
+        test_file.write_text('''header line 1
+header line 2
+header line 3
+<<<<<<< HEAD
+conflict content ours
+=======
+conflict content theirs
+>>>>>>> feature
+footer line 1
+footer line 2
+footer line 3
+''')
+
+        conflict = {
+            'start_line': 4,
+            'end_line': 8,
+        }
+
+        result = apply_resolution(str(test_file), conflict, 'resolved content')
+        assert result is True
+
+        content = test_file.read_text()
+        # Headers preserved
+        assert 'header line 1' in content
+        assert 'header line 2' in content
+        assert 'header line 3' in content
+        # Footers preserved
+        assert 'footer line 1' in content
+        assert 'footer line 2' in content
+        assert 'footer line 3' in content
+        # Resolution applied
+        assert 'resolved content' in content
+        # Conflict markers removed
+        assert '<<<<<<<' not in content
+        assert '=======' not in content
+        assert '>>>>>>>' not in content

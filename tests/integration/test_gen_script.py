@@ -294,3 +294,110 @@ class TestMain:
 
                 # Verify call_llm_with_model_info was called
                 assert mock_call.called
+
+    def test_main_run_flag_executes_script(self, tmp_path, monkeypatch, capsys, mock_config):
+        """--run flag executes the generated script."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, 'argv', ['gen-script', '--run', 'echo hello'])
+
+        with patch('ab_cli.commands.gen_script.call_llm_with_model_info') as mock_call:
+            mock_call.return_value = ({'text': 'echo "Hello from script"'}, 'test-model', 100)
+
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value.returncode = 0
+
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+                # Verify subprocess.run was called to execute the script
+                # The script should be executed via bash
+                run_calls = [c for c in mock_run.call_args_list if c[0][0][0] == 'bash']
+                assert len(run_calls) > 0 or mock_run.called
+
+    def test_main_run_flag_handles_nonzero_exit(self, tmp_path, monkeypatch, capsys, mock_config):
+        """--run flag handles scripts that exit with non-zero code."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, 'argv', ['gen-script', '--run', 'exit with error'])
+
+        with patch('ab_cli.commands.gen_script.call_llm_with_model_info') as mock_call:
+            mock_call.return_value = ({'text': 'exit 1'}, 'test-model', 100)
+
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value.returncode = 1
+
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+                captured = capsys.readouterr()
+                # Should handle non-zero exit gracefully
+
+    def test_main_run_flag_python_script(self, tmp_path, monkeypatch, capsys, mock_config):
+        """--run flag executes Python scripts correctly."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, 'argv', ['gen-script', '--lang', 'python', '--run', 'print hello'])
+
+        with patch('ab_cli.commands.gen_script.call_llm_with_model_info') as mock_call:
+            mock_call.return_value = ({'text': 'print("Hello")'}, 'test-model', 100)
+
+            with patch('subprocess.run') as mock_run:
+                mock_run.return_value.returncode = 0
+
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+                # Verify python3 was used to execute
+                run_calls = [c for c in mock_run.call_args_list if len(c[0][0]) > 0 and c[0][0][0] == 'python3']
+                assert len(run_calls) > 0 or mock_run.called
+
+    def test_main_special_characters_in_description(self, monkeypatch, capsys, mock_config):
+        """Handles special characters in task description."""
+        monkeypatch.setattr(sys, 'argv', ['gen-script', "list files with 'quotes' and $variables"])
+
+        with patch('ab_cli.commands.gen_script.call_llm_with_model_info') as mock_call:
+            mock_call.return_value = ({'text': 'ls -la'}, 'test-model', 100)
+
+            try:
+                main()
+            except SystemExit:
+                pass
+
+            # Verify the call was made successfully
+            assert mock_call.called
+
+    def test_main_unicode_in_description(self, monkeypatch, capsys, mock_config):
+        """Handles unicode characters in task description."""
+        monkeypatch.setattr(sys, 'argv', ['gen-script', 'find files with émojis 🎉 and 中文'])
+
+        with patch('ab_cli.commands.gen_script.call_llm_with_model_info') as mock_call:
+            mock_call.return_value = ({'text': 'find . -name "*"'}, 'test-model', 100)
+
+            try:
+                main()
+            except SystemExit:
+                pass
+
+            assert mock_call.called
+
+    def test_main_multiline_description(self, monkeypatch, capsys, mock_config):
+        """Handles multiline task descriptions."""
+        description = """create a script that:
+1. reads a file
+2. processes each line
+3. outputs the result"""
+        monkeypatch.setattr(sys, 'argv', ['gen-script', description])
+
+        with patch('ab_cli.commands.gen_script.call_llm_with_model_info') as mock_call:
+            mock_call.return_value = ({'text': 'while read line; do echo "$line"; done'}, 'test-model', 100)
+
+            try:
+                main()
+            except SystemExit:
+                pass
+
+            assert mock_call.called

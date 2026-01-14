@@ -1,6 +1,7 @@
 """Integration tests for ab_cli.commands.prompt module."""
 import json
 import os
+from unittest.mock import patch, MagicMock
 
 
 class TestLoadConfig:
@@ -525,3 +526,267 @@ PORT=8080
 
         # Sensitive values redacted
         assert "sk_live_secret123" not in result
+
+
+class TestApiErrorHandling:
+    """Tests for API error handling scenarios."""
+
+    def test_send_to_openrouter_timeout(self, mock_env, temp_config_dir):
+        """Handles API timeout gracefully."""
+        import requests
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_post.side_effect = requests.exceptions.Timeout("Connection timed out")
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="test/model",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            assert result is None
+
+    def test_send_to_openrouter_connection_error(self, mock_env, temp_config_dir):
+        """Handles connection errors gracefully."""
+        import requests
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_post.side_effect = requests.exceptions.ConnectionError("Failed to connect")
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="test/model",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            assert result is None
+
+    def test_send_to_openrouter_rate_limit_429(self, mock_env, temp_config_dir, capsys):
+        """Handles rate limit (429) responses."""
+        import requests
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 429
+            mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+                "429 Too Many Requests"
+            )
+            mock_response.text = '{"error": "Rate limit exceeded"}'
+            mock_post.return_value = mock_response
+
+            # Create a proper exception with response attribute
+            http_error = requests.exceptions.HTTPError("429 Too Many Requests")
+            http_error.response = mock_response
+            mock_response.raise_for_status.side_effect = http_error
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="test/model",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            assert result is None
+            # Error should be logged to stderr
+            captured = capsys.readouterr()
+            assert "429" in captured.err or "error" in captured.err.lower()
+
+    def test_send_to_openrouter_server_error_500(self, mock_env, temp_config_dir, capsys):
+        """Handles server error (500) responses."""
+        import requests
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 500
+            mock_response.text = '{"error": "Internal server error"}'
+
+            http_error = requests.exceptions.HTTPError("500 Internal Server Error")
+            http_error.response = mock_response
+            mock_response.raise_for_status.side_effect = http_error
+
+            mock_post.return_value = mock_response
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="test/model",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            assert result is None
+
+    def test_send_to_openrouter_malformed_json_response(self, mock_env, temp_config_dir, capsys):
+        """Handles malformed JSON responses."""
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status.return_value = None
+            # Return invalid structure (missing 'choices')
+            mock_response.json.return_value = {"unexpected": "structure"}
+            mock_post.return_value = mock_response
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="test/model",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            assert result is None
+            captured = capsys.readouterr()
+            assert "error" in captured.err.lower()
+
+    def test_send_to_openrouter_empty_choices(self, mock_env, temp_config_dir, capsys):
+        """Handles responses with empty choices array."""
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status.return_value = None
+            mock_response.json.return_value = {"choices": []}
+            mock_post.return_value = mock_response
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="test/model",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            assert result is None
+
+    def test_send_to_openrouter_missing_content(self, mock_env, temp_config_dir):
+        """Handles responses with missing content field."""
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status.return_value = None
+            mock_response.json.return_value = {
+                "choices": [{"message": {}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5}
+            }
+            mock_post.return_value = mock_response
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="test/model",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            # Should return result but with empty text
+            if result:
+                assert result['text'] == ''
+
+    def test_send_to_openrouter_no_api_key(self, temp_config_dir, monkeypatch, capsys):
+        """Returns None when API key is not set."""
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        # Ensure no API key is set
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+        result = send_to_openrouter(
+            prompt="test",
+            context="",
+            lang="en",
+            specialist=None,
+            model_name="test/model",
+            timeout_s=30,
+            max_completion_tokens=100
+        )
+
+        assert result is None
+        captured = capsys.readouterr()
+        assert "OPENROUTER_API_KEY" in captured.err
+
+    def test_send_to_openrouter_json_decode_error(self, mock_env, temp_config_dir, capsys):
+        """Handles JSON decode errors from response."""
+        import json
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status.return_value = None
+            mock_response.json.side_effect = json.JSONDecodeError("Invalid JSON", "", 0)
+            mock_post.return_value = mock_response
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="test/model",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            assert result is None
+
+
+class TestReasoningModelHandling:
+    """Tests for handling reasoning models (gpt-5, o1, o3)."""
+
+    def test_send_to_openrouter_reasoning_field_fallback(self, mock_env, temp_config_dir):
+        """Uses reasoning field when content is empty."""
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        with patch('requests.post') as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status.return_value = None
+            mock_response.json.return_value = {
+                "choices": [{
+                    "message": {
+                        "content": "",
+                        "reasoning": "This is the reasoning output for the task."
+                    }
+                }],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 50}
+            }
+            mock_post.return_value = mock_response
+
+            result = send_to_openrouter(
+                prompt="test",
+                context="",
+                lang="en",
+                specialist=None,
+                model_name="openai/o1-preview",
+                timeout_s=30,
+                max_completion_tokens=100
+            )
+
+            assert result is not None
+            assert result['text'] == "This is the reasoning output for the task."

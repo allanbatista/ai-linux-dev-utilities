@@ -366,6 +366,83 @@ class TestMain:
                 except SystemExit:
                     pass
 
+    def test_main_stdin_empty_input(self, monkeypatch, capsys, mock_config):
+        """Handles empty stdin input gracefully."""
+        monkeypatch.setattr(sys, 'argv', ['explain', '-'])
+
+        with patch('sys.stdin') as mock_stdin:
+            mock_stdin.read.return_value = ''
+
+            with patch('ab_cli.commands.explain.call_llm_with_model_info') as mock_call:
+                mock_call.return_value = ({'text': 'Empty input provided'}, 'test-model', 100)
+
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+                # The function should still be called even with empty input
+                # as it may be treated as a concept
+
+    def test_main_stdin_whitespace_only(self, monkeypatch, capsys, mock_config):
+        """Handles stdin with only whitespace."""
+        monkeypatch.setattr(sys, 'argv', ['explain', '-'])
+
+        with patch('sys.stdin') as mock_stdin:
+            mock_stdin.read.return_value = '   \n\t   \n   '
+
+            with patch('ab_cli.commands.explain.call_llm_with_model_info') as mock_call:
+                mock_call.return_value = ({'text': 'Whitespace input'}, 'test-model', 100)
+
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+    def test_main_stdin_multiline_error(self, monkeypatch, capsys, mock_config):
+        """Handles multiline error from stdin (e.g., stack trace)."""
+        monkeypatch.setattr(sys, 'argv', ['explain', '-'])
+
+        stack_trace = '''Traceback (most recent call last):
+  File "app.py", line 42, in main
+    result = process_data(data)
+  File "app.py", line 15, in process_data
+    return data['key']
+KeyError: 'key' '''
+
+        with patch('sys.stdin') as mock_stdin:
+            mock_stdin.read.return_value = stack_trace
+
+            with patch('ab_cli.commands.explain.call_llm_with_model_info') as mock_call:
+                mock_call.return_value = ({'text': 'This is a KeyError...'}, 'test-model', 100)
+
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+                # Verify LLM was called with the multiline content
+                assert mock_call.called
+
+    def test_main_stdin_with_special_characters(self, monkeypatch, capsys, mock_config):
+        """Handles stdin with special characters and unicode."""
+        monkeypatch.setattr(sys, 'argv', ['explain', '-'])
+
+        special_input = "Error: 文字化け in file 'test.py' - café résumé"
+
+        with patch('sys.stdin') as mock_stdin:
+            mock_stdin.read.return_value = special_input
+
+            with patch('ab_cli.commands.explain.call_llm_with_model_info') as mock_call:
+                mock_call.return_value = ({'text': 'Unicode error handling'}, 'test-model', 100)
+
+                try:
+                    main()
+                except SystemExit:
+                    pass
+
+                assert mock_call.called
+
 
 class TestSafePath:
     """Tests for safe_path function - path traversal protection."""
