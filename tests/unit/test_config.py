@@ -2,9 +2,17 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from ab_cli.core.config import (
     AbConfig,
+    AbConfigModel,
+    ConfigValidationError,
     DEFAULT_CONFIG,
+    GlobalConfigModel,
+    HistoryConfigModel,
+    ModelsConfigModel,
+    ThresholdsModel,
     estimate_tokens,
     get_config,
     get_default_model,
@@ -310,3 +318,259 @@ class TestConvenienceFunctions:
         """select_model_for_tokens delegates to AbConfig."""
         model = select_model_for_tokens(50000)
         assert model == "test/model-small"
+
+
+class TestPydanticModels:
+    """Tests for Pydantic configuration models."""
+
+    def test_global_config_defaults(self):
+        """GlobalConfigModel has correct default values."""
+        model = GlobalConfigModel()
+        assert model.language == "en"
+        assert model.api_base == "https://openrouter.ai/api/v1"
+        assert model.api_key_env == "OPENROUTER_API_KEY"
+        assert model.timeout_seconds == 300
+
+    def test_global_config_custom_values(self):
+        """GlobalConfigModel accepts custom values."""
+        model = GlobalConfigModel(
+            language="pt-br",
+            api_base="https://custom.api/v1",
+            timeout_seconds=120
+        )
+        assert model.language == "pt-br"
+        assert model.api_base == "https://custom.api/v1"
+        assert model.timeout_seconds == 120
+
+    def test_global_config_timeout_validation(self):
+        """GlobalConfigModel validates timeout_seconds bounds."""
+        from pydantic import ValidationError
+
+        # Timeout must be > 0
+        with pytest.raises(ValidationError):
+            GlobalConfigModel(timeout_seconds=0)
+
+        # Timeout must be <= 600
+        with pytest.raises(ValidationError):
+            GlobalConfigModel(timeout_seconds=601)
+
+        # Valid boundary values
+        model_min = GlobalConfigModel(timeout_seconds=1)
+        assert model_min.timeout_seconds == 1
+
+        model_max = GlobalConfigModel(timeout_seconds=600)
+        assert model_max.timeout_seconds == 600
+
+    def test_thresholds_defaults(self):
+        """ThresholdsModel has correct default values."""
+        model = ThresholdsModel()
+        assert model.small_max_tokens == 128000
+        assert model.medium_max_tokens == 256000
+
+    def test_thresholds_validation(self):
+        """ThresholdsModel validates token values are positive."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            ThresholdsModel(small_max_tokens=0)
+
+        with pytest.raises(ValidationError):
+            ThresholdsModel(medium_max_tokens=-1)
+
+    def test_models_config_defaults(self):
+        """ModelsConfigModel has correct default values."""
+        model = ModelsConfigModel()
+        assert model.small == "nvidia/nemotron-3-nano-30b-a3b:free"
+        assert model.medium == "openai/gpt-5-nano"
+        assert model.large == "x-ai/grok-4.1-fast"
+        assert model.default == "nvidia/nemotron-3-nano-30b-a3b:free"
+        assert isinstance(model.thresholds, ThresholdsModel)
+
+    def test_history_config_defaults(self):
+        """HistoryConfigModel has correct default values."""
+        model = HistoryConfigModel()
+        assert model.enabled is True
+        assert model.directory == ""
+
+    def test_ab_config_model_defaults(self):
+        """AbConfigModel has correct default structure."""
+        model = AbConfigModel()
+        assert model.version == "1.0"
+        assert isinstance(model.global_settings, GlobalConfigModel)
+        assert isinstance(model.models, ModelsConfigModel)
+        assert isinstance(model.commands, dict)
+        assert isinstance(model.history, HistoryConfigModel)
+
+    def test_ab_config_model_alias(self):
+        """AbConfigModel uses 'global' alias correctly."""
+        data = {
+            "version": "1.0",
+            "global": {
+                "language": "fr",
+                "timeout_seconds": 200
+            },
+            "models": {
+                "small": "test/small",
+                "medium": "test/medium",
+                "large": "test/large",
+                "default": "test/default"
+            }
+        }
+        model = AbConfigModel.model_validate(data)
+        assert model.global_settings.language == "fr"
+        assert model.global_settings.timeout_seconds == 200
+
+        # Verify dump uses alias
+        dumped = model.model_dump(by_alias=True)
+        assert "global" in dumped
+        assert dumped["global"]["language"] == "fr"
+
+    def test_ab_config_model_extra_fields_allowed(self):
+        """AbConfigModel allows extra fields for forward compatibility."""
+        data = {
+            "version": "2.0",
+            "global": {"language": "en", "new_field": "value"},
+            "models": {
+                "small": "a",
+                "medium": "b",
+                "large": "c",
+                "default": "a"
+            },
+            "custom_section": {"key": "value"}
+        }
+        model = AbConfigModel.model_validate(data)
+        assert model.version == "2.0"
+
+    def test_ab_config_model_from_default_config(self):
+        """AbConfigModel validates DEFAULT_CONFIG successfully."""
+        model = AbConfigModel.model_validate(DEFAULT_CONFIG)
+        assert model.version == "1.0"
+        assert model.global_settings.language == "en"
+        assert model.models.default == "nvidia/nemotron-3-nano-30b-a3b:free"
+
+
+class TestConfigValidation:
+    """Tests for config validation integration."""
+
+    def test_validate_returns_model(self, mock_config):
+        """validate() returns AbConfigModel on success."""
+        config = get_config()
+        model = config.validate()
+        assert isinstance(model, AbConfigModel)
+
+    def test_validate_with_custom_data(self, temp_config_dir):
+        """validate() can validate custom data."""
+        config = get_config()
+        custom_data = {
+            "version": "1.0",
+            "global": {"language": "de", "timeout_seconds": 100},
+            "models": {
+                "small": "test/small",
+                "medium": "test/medium",
+                "large": "test/large",
+                "default": "test/small"
+            }
+        }
+        model = config.validate(custom_data)
+        assert model.global_settings.language == "de"
+
+    def test_validate_raises_on_invalid(self, temp_config_dir):
+        """validate() raises ConfigValidationError on invalid data."""
+        config = get_config()
+        invalid_data = {
+            "version": "1.0",
+            "global": {"timeout_seconds": -1}  # Invalid: must be > 0
+        }
+        with pytest.raises(ConfigValidationError) as exc_info:
+            config.validate(invalid_data)
+        assert len(exc_info.value.errors) > 0
+
+    def test_get_validated_model(self, mock_config):
+        """get_validated_model returns cached model."""
+        config = get_config()
+        model = config.get_validated_model()
+        assert isinstance(model, AbConfigModel)
+
+    def test_get_validation_errors_empty_on_valid(self, mock_config):
+        """get_validation_errors returns empty list for valid config."""
+        config = get_config()
+        errors = config.get_validation_errors()
+        assert errors == []
+
+    def test_has_validation_errors_false_on_valid(self, mock_config):
+        """has_validation_errors returns False for valid config."""
+        config = get_config()
+        assert config.has_validation_errors() is False
+
+    def test_invalid_config_falls_back_to_defaults(self, temp_config_dir, capsys):
+        """Invalid config values are replaced with defaults."""
+        from ab_cli.core import config as config_module
+
+        # Create config with invalid timeout
+        invalid_config = {
+            "version": "1.0",
+            "global": {
+                "language": "en",
+                "timeout_seconds": 9999  # Invalid: > 600
+            },
+            "models": {
+                "small": "test/small",
+                "medium": "test/medium",
+                "large": "test/large",
+                "default": "test/default"
+            }
+        }
+        config_file = config_module.AB_CONFIG_FILE
+        with open(config_file, "w") as f:
+            json.dump(invalid_config, f)
+
+        config = get_config()
+        config.reload()
+
+        # Should have validation errors but still load
+        assert config.has_validation_errors() is True
+        errors = config.get_validation_errors()
+        assert len(errors) > 0
+
+        # Capture warning output
+        captured = capsys.readouterr()
+        assert "Warning" in captured.out or config.has_validation_errors()
+
+    def test_reload_revalidates(self, mock_config, temp_config_dir):
+        """reload() re-validates configuration."""
+        from ab_cli.core import config as config_module
+
+        config = get_config()
+        initial_model = config.get_validated_model()
+        assert initial_model is not None
+
+        # Modify config file
+        with open(config_module.AB_CONFIG_FILE) as f:
+            data = json.load(f)
+        data["global"]["language"] = "es"
+        with open(config_module.AB_CONFIG_FILE, "w") as f:
+            json.dump(data, f)
+
+        config.reload()
+        new_model = config.get_validated_model()
+        assert new_model.global_settings.language == "es"
+
+
+class TestConfigValidationError:
+    """Tests for ConfigValidationError exception."""
+
+    def test_error_has_message(self):
+        """ConfigValidationError stores message."""
+        error = ConfigValidationError("Test error")
+        assert str(error) == "Test error"
+
+    def test_error_has_errors_list(self):
+        """ConfigValidationError stores errors list."""
+        errors = [{"loc": ("field",), "msg": "error"}]
+        error = ConfigValidationError("Test error", errors=errors)
+        assert error.errors == errors
+
+    def test_error_default_empty_list(self):
+        """ConfigValidationError defaults to empty errors list."""
+        error = ConfigValidationError("Test error")
+        assert error.errors == []

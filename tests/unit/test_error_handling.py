@@ -137,14 +137,16 @@ class TestHandleCliErrors:
 
         assert exc_info.value.code == 130
 
-    def test_does_not_catch_other_exceptions(self):
-        """Does not catch non-AbCliError exceptions."""
+    def test_catches_unexpected_exceptions_with_exit(self):
+        """Catches unexpected exceptions and exits with code 1."""
         @handle_cli_errors
         def bad_func():
             raise TypeError("Type error")
 
-        with pytest.raises(TypeError):
+        with pytest.raises(SystemExit) as exc_info:
             bad_func()
+
+        assert exc_info.value.code == 1
 
     def test_preserves_function_name(self):
         """Preserves function __name__ attribute."""
