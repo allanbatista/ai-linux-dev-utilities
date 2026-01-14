@@ -8,7 +8,7 @@ import argparse
 import os
 import subprocess
 import sys
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 
 from ab_cli.core.config import get_language
 from ab_cli.utils import (
@@ -32,8 +32,50 @@ def has_conflict_markers(content: str) -> bool:
     return '<<<<<<<' in content and '=======' in content and '>>>>>>>' in content
 
 
-def parse_conflicts(content: str) -> list[dict]:
-    """Parse conflict sections from file content."""
+def parse_conflicts(content: str) -> List[Dict]:
+    """Parse git merge conflict sections from file content.
+
+    Scans the file content for git conflict markers and extracts each
+    conflict block into a structured dictionary containing both versions
+    of the conflicting code and their locations.
+
+    Conflict markers follow the standard git format:
+        <<<<<<< HEAD (or branch name)
+        ... our version ...
+        =======
+        ... their version ...
+        >>>>>>> branch-name
+
+    Args:
+        content: The full file content as a string, potentially containing
+            one or more merge conflicts with standard git conflict markers.
+
+    Returns:
+        A list of dictionaries, one per conflict found. Each dictionary
+        contains:
+        - 'start_line' (int): 1-indexed line number of the "<<<<<<" marker
+        - 'ours_marker' (str): The full "<<<<<<" line including branch name
+        - 'ours' (list[str]): Lines from our version (between <<<< and ====)
+        - 'theirs' (list[str]): Lines from their version (between ==== and >>>>)
+        - 'theirs_marker' (str): The full ">>>>>>>" line including branch name
+        - 'end_line' (int): 1-indexed line number of the ">>>>>>>" marker
+
+        Returns an empty list if no conflicts are found.
+
+    Examples:
+        >>> content = '''<<<<<<< HEAD
+        ... x = 1
+        ... =======
+        ... x = 2
+        ... >>>>>>> feature'''
+        >>> conflicts = parse_conflicts(content)
+        >>> len(conflicts)
+        1
+        >>> conflicts[0]['ours']
+        ['x = 1']
+        >>> conflicts[0]['theirs']
+        ['x = 2']
+    """
     conflicts = []
     lines = content.split('\n')
 
@@ -75,7 +117,7 @@ def parse_conflicts(content: str) -> list[dict]:
     return conflicts
 
 
-def get_file_context(filepath: str, conflict: dict, context_lines: int = 10) -> tuple[str, str]:
+def get_file_context(filepath: str, conflict: Dict, context_lines: int = 10) -> Tuple[str, str]:
     """Get context before and after the conflict."""
     try:
         with open(filepath, 'r') as f:

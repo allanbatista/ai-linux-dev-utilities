@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import List
 
 from ab_cli.core.config import get_language
 from ab_cli.utils import (
@@ -25,8 +26,34 @@ from ab_cli.utils import (
 )
 
 
-def run_cmd(cmd: list[str], default: str = "unknown") -> str:
-    """Run a command and return stdout, or default on failure."""
+def run_cmd(cmd: List[str], default: str = "unknown") -> str:
+    """Execute a shell command and return its stdout output.
+
+    Runs the specified command as a subprocess, capturing its output.
+    Returns the default value if the command fails or the executable
+    is not found, making it safe to use for optional system information
+    gathering.
+
+    Args:
+        cmd: The command to execute as a list of strings, where the first
+            element is the executable and subsequent elements are arguments.
+            Example: ['uname', '-srm'] or ['python3', '--version'].
+        default: The value to return if the command fails or the executable
+            is not found. Defaults to "unknown".
+
+    Returns:
+        The stripped stdout output of the command on success, or the
+        default value if the command returns a non-zero exit code or
+        the executable is not found.
+
+    Examples:
+        >>> run_cmd(['uname', '-s'])
+        'Linux'
+        >>> run_cmd(['nonexistent-command'], default='N/A')
+        'N/A'
+        >>> run_cmd(['python3', '--version'])
+        'Python 3.12.0'
+    """
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return result.stdout.strip()

@@ -7,6 +7,7 @@ Analyzes commits between tags/refs and generates structured changelog using LLM.
 import argparse
 import subprocess
 import sys
+from typing import Dict, List
 
 from ab_cli.core.config import get_language
 from ab_cli.utils import (
@@ -42,7 +43,7 @@ def get_commit_count(range_spec: str) -> int:
         return 0
 
 
-def parse_commits(commits_str: str) -> list[dict]:
+def parse_commits(commits_str: str) -> List[Dict]:
     """Parse commits into structured format."""
     commits = []
     for line in commits_str.split('\n'):
@@ -59,7 +60,7 @@ def parse_commits(commits_str: str) -> list[dict]:
     return commits
 
 
-def categorize_commits(commits: list[dict]) -> dict[str, list[dict]]:
+def categorize_commits(commits: List[Dict]) -> Dict[str, List[Dict]]:
     """Categorize commits by type (feat, fix, etc.)."""
     categories = {
         'features': [],
