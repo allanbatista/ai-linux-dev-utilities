@@ -298,3 +298,230 @@ class TestOutputFormatting:
 
         relative = file_path.relative_to(tmp_path)
         assert str(relative) == "subdir/file.py"
+
+
+class TestSanitizeSensitiveData:
+    """Tests for sanitize_sensitive_data function."""
+
+    def test_sanitize_empty_text(self):
+        """Returns empty text unchanged."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        assert sanitize_sensitive_data("") == ""
+        assert sanitize_sensitive_data(None) is None
+
+    def test_sanitize_text_without_secrets(self):
+        """Leaves normal text unchanged."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        text = "This is a normal text without any secrets."
+        assert sanitize_sensitive_data(text) == text
+
+    def test_sanitize_openrouter_api_key(self):
+        """Sanitizes OPENROUTER_API_KEY."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        text = "OPENROUTER_API_KEY=sk-or-v1-abc123def456"
+        result = sanitize_sensitive_data(text)
+        assert "sk-or-v1-abc123def456" not in result
+        assert "[REDACTED]" in result
+
+    def test_sanitize_custom_api_keys(self):
+        """Sanitizes custom API keys like STRIPE_API_KEY, GITHUB_API_KEY."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        # Test various custom API key formats
+        test_cases = [
+            "STRIPE_API_KEY=sk_live_abc123def456ghi789",
+            "GITHUB_API_KEY=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "AWS_API_KEY=AKIAIOSFODNN7EXAMPLE",
+            "SENDGRID_API_KEY=SG.abcdefghijklmnop",
+            "CUSTOM_SERVICE_API_KEY=my-secret-key-12345",
+        ]
+
+        for text in test_cases:
+            result = sanitize_sensitive_data(text)
+            # The value after = should be redacted
+            assert "[REDACTED]" in result, f"Failed for: {text}"
+            # Ensure the key name is preserved
+            key_name = text.split("=")[0]
+            assert key_name in result, f"Key name lost for: {text}"
+
+    def test_sanitize_webhook_urls(self):
+        """Sanitizes webhook URLs."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        test_cases = [
+            "https://hooks.slack.com/services/T00000000/B00000000/XXXX",
+            "https://api.github.com/repos/user/repo/hooks/webhook",
+            "http://example.com/webhook/abc123",
+            "https://discord.com/api/webhooks/123456789/abcdef",
+            "Config: webhook_url=https://my.service.com/webhook/secret",
+        ]
+
+        for text in test_cases:
+            result = sanitize_sensitive_data(text)
+            assert "[REDACTED_WEBHOOK_URL]" in result, f"Failed for: {text}"
+            assert "webhook" not in result.lower() or "[REDACTED_WEBHOOK_URL]" in result
+
+    def test_sanitize_oauth_tokens(self):
+        """Sanitizes OAuth tokens."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        test_cases = [
+            "oauth_token=ya29.a0AfH6SMBx1234567890abcdefghijklmnop",
+            "OAUTH_TOKEN: gho_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+            "ACCESS_TOKEN: Bearer abc123def456",
+        ]
+
+        for text in test_cases:
+            result = sanitize_sensitive_data(text)
+            assert "[REDACTED]" in result, f"Failed for: {text}"
+
+    def test_sanitize_bearer_tokens(self):
+        """Sanitizes Bearer tokens with various formats."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        test_cases = [
+            ("Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+             "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"),
+            ("Bearer abc123-def456_ghi789.jkl012+mno345/pqr678=",
+             "abc123-def456_ghi789.jkl012+mno345/pqr678="),
+        ]
+
+        for text, secret in test_cases:
+            result = sanitize_sensitive_data(text)
+            assert secret not in result, f"Secret not redacted for: {text}"
+            assert "[REDACTED]" in result, f"Failed for: {text}"
+
+    def test_sanitize_bearer_with_sk_token(self):
+        """Bearer tokens with sk- prefix are caught by API key pattern."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        # sk- tokens in Bearer headers get caught by the API key pattern
+        text = "Header: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz"
+        result = sanitize_sensitive_data(text)
+        assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in result
+        assert "[REDACTED" in result  # Either [REDACTED] or [REDACTED_API_KEY]
+
+    def test_sanitize_private_keys(self):
+        """Sanitizes PEM private keys."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        private_key = """-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy
+YmIxMzU2NzE1MzY1Njg5MDEyMzQ1Njc4OTAxMjM0NTY3
+-----END RSA PRIVATE KEY-----"""
+
+        result = sanitize_sensitive_data(private_key)
+        assert "[REDACTED_PRIVATE_KEY]" in result
+        assert "MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn" not in result
+
+    def test_sanitize_ec_private_key(self):
+        """Sanitizes EC private keys."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        private_key = """-----BEGIN EC PRIVATE KEY-----
+MHQCAQEEIBYr4jkS2RSVPB6c/87
+-----END EC PRIVATE KEY-----"""
+
+        result = sanitize_sensitive_data(private_key)
+        assert "[REDACTED_PRIVATE_KEY]" in result
+
+    def test_sanitize_generic_secrets(self):
+        """Sanitizes generic secret patterns."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        test_cases = [
+            "DB_PASSWORD=super_secret_pass123",
+            "APP_SECRET=my-app-secret-key",
+            "AUTH_TOKEN=abc123def456ghi789",
+            "ENCRYPTION_KEY=AES256-key-value",
+            "AWS_CREDENTIAL=AKIAXXXXXXXXXXXXXXXX",
+            "CLIENT_SECRET=oauth-client-secret-value",
+        ]
+
+        for text in test_cases:
+            result = sanitize_sensitive_data(text)
+            assert "[REDACTED]" in result, f"Failed for: {text}"
+
+    def test_sanitize_passwords(self):
+        """Sanitizes password patterns."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        test_cases = [
+            'password=mysecretpassword',
+            'PASSWORD: "complex_p@ssw0rd!"',
+            "passwd=linux_password",
+            "pwd=shortpwd",
+        ]
+
+        for text in test_cases:
+            result = sanitize_sensitive_data(text)
+            assert "[REDACTED]" in result, f"Failed for: {text}"
+
+    def test_sanitize_sk_api_keys(self):
+        """Sanitizes OpenAI-style sk- API keys."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        text = "Using API key: sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"
+        result = sanitize_sensitive_data(text)
+        assert "[REDACTED_API_KEY]" in result
+        assert "sk-proj-abcdefghijklmnopqrstuvwxyz" not in result
+
+    def test_sanitize_basic_auth(self):
+        """Sanitizes Basic auth headers."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        text = "Authorization: Basic dXNlcm5hbWU6cGFzc3dvcmQxMjM0NTY3ODk="
+        result = sanitize_sensitive_data(text)
+        assert "Basic [REDACTED]" in result
+        assert "dXNlcm5hbWU6cGFzc3dvcmQ" not in result
+
+    def test_sanitize_mixed_content(self):
+        """Sanitizes text with multiple sensitive patterns."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        text = """
+Configuration:
+OPENROUTER_API_KEY=sk-or-v1-abc123
+STRIPE_API_KEY=sk_live_xyz789
+webhook_url=https://hooks.slack.com/services/T00/B00/XXX
+DB_PASSWORD=super_secret
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9
+"""
+        result = sanitize_sensitive_data(text)
+
+        # All sensitive values should be redacted
+        assert "sk-or-v1-abc123" not in result
+        assert "sk_live_xyz789" not in result
+        assert "hooks.slack.com" not in result
+        assert "super_secret" not in result
+        assert "eyJhbGciOiJIUzI1NiJ9" not in result
+
+        # But structure should be preserved
+        assert "Configuration:" in result
+        assert "[REDACTED]" in result
+
+    def test_sanitize_preserves_non_sensitive(self):
+        """Preserves non-sensitive content while sanitizing."""
+        from ab_cli.commands.prompt import sanitize_sensitive_data
+
+        text = """
+# Application Config
+DEBUG=true
+LOG_LEVEL=info
+API_URL=https://api.example.com
+STRIPE_API_KEY=sk_live_secret123
+PORT=8080
+"""
+        result = sanitize_sensitive_data(text)
+
+        # Non-sensitive values preserved
+        assert "DEBUG=true" in result
+        assert "LOG_LEVEL=info" in result
+        assert "PORT=8080" in result
+
+        # Sensitive values redacted
+        assert "sk_live_secret123" not in result
