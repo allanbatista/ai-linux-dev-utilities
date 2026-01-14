@@ -57,10 +57,21 @@ from ab_cli.utils.git_helpers import (
     get_commits_log,
     get_files_changed,
 )
+from ab_cli.utils.api import (
+    send_to_openrouter,
+    build_specialist_prefix,
+    set_verbose as set_api_verbose,
+)
 from ab_cli.utils.llm_helpers import (
     call_llm,
     call_llm_with_model_info,
     get_llm_text,
+)
+from ab_cli.utils.prompt_builder import (
+    build_generation_prompt,
+    clean_llm_response,
+    normalize_identifier,
+    strip_markdown_code_block,
 )
 from ab_cli.utils.error_handling import (
     cli_error_handler,
@@ -123,6 +134,10 @@ __all__ = [
     'get_diff_against_base',
     'get_commits_log',
     'get_files_changed',
+    # API functions
+    'send_to_openrouter',
+    'build_specialist_prefix',
+    'set_api_verbose',
     # LLM helpers
     'call_llm',
     'call_llm_with_model_info',
@@ -130,4 +145,9 @@ __all__ = [
     # Error handling
     'cli_error_handler',
     'handle_cli_errors',
+    # Prompt builder
+    'build_generation_prompt',
+    'clean_llm_response',
+    'normalize_identifier',
+    'strip_markdown_code_block',
 ]

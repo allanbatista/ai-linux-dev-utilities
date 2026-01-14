@@ -6,7 +6,7 @@ model selection based on token count.
 from typing import Dict, Optional, Tuple
 
 from ab_cli.core.config import get_config, estimate_tokens
-from ab_cli.commands.prompt import send_to_openrouter
+from ab_cli.utils.api import send_to_openrouter
 
 
 def call_llm(
