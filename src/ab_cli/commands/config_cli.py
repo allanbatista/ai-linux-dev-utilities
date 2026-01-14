@@ -17,6 +17,7 @@ import subprocess
 import sys
 
 from ab_cli.core.config import get_config, AB_CONFIG_FILE, DEFAULT_CONFIG
+from ab_cli.utils.error_handling import handle_cli_errors
 
 
 def cmd_show(args):
@@ -178,6 +179,7 @@ def cmd_clear_history(args):
     print(f"Deleted {deleted} history files.")
 
 
+@handle_cli_errors
 def main():
     parser = argparse.ArgumentParser(
         description='Manage ab CLI configuration',

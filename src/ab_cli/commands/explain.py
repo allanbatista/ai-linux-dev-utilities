@@ -12,6 +12,7 @@ import sys
 from typing import List, Optional, Tuple
 
 from ab_cli.core.config import get_language
+from ab_cli.utils.error_handling import handle_cli_errors
 from ab_cli.utils import (
     call_llm_with_model_info,
     log_info,
@@ -351,6 +352,7 @@ def generate_explanation(prompt_text: str, lang: str) -> str:
         return ""
 
 
+@handle_cli_errors
 def main():
     parser = argparse.ArgumentParser(
         description='Explain code, errors, or technical concepts using LLM',

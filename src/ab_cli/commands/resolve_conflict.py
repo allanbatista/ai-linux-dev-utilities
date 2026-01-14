@@ -11,6 +11,7 @@ import sys
 from typing import Dict, List, Optional, Tuple
 
 from ab_cli.core.config import get_language
+from ab_cli.utils.error_handling import handle_cli_errors
 from ab_cli.utils import (
     call_llm,
     log_info,
@@ -232,6 +233,7 @@ def display_resolution(filepath: str, conflict: dict, resolved: str) -> None:
     print()
 
 
+@handle_cli_errors
 def main():
     parser = argparse.ArgumentParser(
         description='Resolve merge conflicts using LLM',

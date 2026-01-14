@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import List
 
 from ab_cli.core.config import get_language
+from ab_cli.utils.error_handling import handle_cli_errors
 from ab_cli.utils import (
     call_llm_with_model_info,
     log_info,
@@ -281,6 +282,7 @@ Return ONLY the command:"""
         return ""
 
 
+@handle_cli_errors
 def main():
     parser = argparse.ArgumentParser(
         description='Generate scripts from natural language descriptions',
