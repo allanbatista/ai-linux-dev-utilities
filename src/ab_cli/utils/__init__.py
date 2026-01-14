@@ -77,6 +77,23 @@ from ab_cli.utils.error_handling import (
     cli_error_handler,
     handle_cli_errors,
 )
+from ab_cli.utils.file_processing import (
+    is_binary_file,
+    find_git_root,
+    find_aiignore_files,
+    load_aiignore_spec,
+    should_ignore_path,
+    process_file,
+    estimate_file_tokens,
+    get_directory_files,
+)
+from ab_cli.utils.history import (
+    sanitize_sensitive_data,
+    save_to_history,
+    calculate_estimated_cost,
+    update_history_index,
+    cleanup_old_history,
+)
 
 __all__ = [
     # Logging functions
@@ -150,4 +167,19 @@ __all__ = [
     'clean_llm_response',
     'normalize_identifier',
     'strip_markdown_code_block',
+    # File processing
+    'is_binary_file',
+    'find_git_root',
+    'find_aiignore_files',
+    'load_aiignore_spec',
+    'should_ignore_path',
+    'process_file',
+    'estimate_file_tokens',
+    'get_directory_files',
+    # History
+    'sanitize_sensitive_data',
+    'save_to_history',
+    'calculate_estimated_cost',
+    'update_history_index',
+    'cleanup_old_history',
 ]
