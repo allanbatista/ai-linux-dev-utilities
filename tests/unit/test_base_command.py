@@ -1,7 +1,6 @@
 """Unit tests for ab_cli.core.base_command module."""
 import argparse
 import sys
-from io import StringIO
 from unittest.mock import patch
 
 import pytest
@@ -249,7 +248,7 @@ class TestCliCommandHelp:
     def test_help_includes_arguments(self, capsys):
         """--help includes argument help text."""
         cmd = ExampleCommand()
-        result = cmd.run(['--help'])
+        cmd.run(['--help'])
 
         captured = capsys.readouterr()
         assert "--verbose" in captured.out

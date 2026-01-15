@@ -1,5 +1,4 @@
 """Integration tests for ab_cli.commands.explain module."""
-import os
 import sys
 from unittest.mock import patch
 

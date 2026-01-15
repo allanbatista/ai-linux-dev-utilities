@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Unit tests for prompt_builder utilities."""
-import pytest
 from ab_cli.utils.prompt_builder import (
     build_generation_prompt,
     clean_llm_response,

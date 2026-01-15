@@ -332,7 +332,7 @@ class TestMain:
                 except SystemExit:
                     pass
 
-                captured = capsys.readouterr()
+                _ = capsys.readouterr()
                 # Should handle non-zero exit gracefully
 
     def test_main_run_flag_python_script(self, tmp_path, monkeypatch, capsys, mock_config):
