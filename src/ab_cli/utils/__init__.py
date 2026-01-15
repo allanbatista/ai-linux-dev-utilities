@@ -57,14 +57,42 @@ from ab_cli.utils.git_helpers import (
     get_commits_log,
     get_files_changed,
 )
+from ab_cli.utils.api import (
+    send_to_openrouter,
+    build_specialist_prefix,
+    set_verbose as set_api_verbose,
+)
 from ab_cli.utils.llm_helpers import (
     call_llm,
     call_llm_with_model_info,
     get_llm_text,
 )
+from ab_cli.utils.prompt_builder import (
+    build_generation_prompt,
+    clean_llm_response,
+    normalize_identifier,
+    strip_markdown_code_block,
+)
 from ab_cli.utils.error_handling import (
     cli_error_handler,
     handle_cli_errors,
+)
+from ab_cli.utils.file_processing import (
+    is_binary_file,
+    find_git_root,
+    find_aiignore_files,
+    load_aiignore_spec,
+    should_ignore_path,
+    process_file,
+    estimate_file_tokens,
+    get_directory_files,
+)
+from ab_cli.utils.history import (
+    sanitize_sensitive_data,
+    save_to_history,
+    calculate_estimated_cost,
+    update_history_index,
+    cleanup_old_history,
 )
 
 __all__ = [
@@ -123,6 +151,10 @@ __all__ = [
     'get_diff_against_base',
     'get_commits_log',
     'get_files_changed',
+    # API functions
+    'send_to_openrouter',
+    'build_specialist_prefix',
+    'set_api_verbose',
     # LLM helpers
     'call_llm',
     'call_llm_with_model_info',
@@ -130,4 +162,24 @@ __all__ = [
     # Error handling
     'cli_error_handler',
     'handle_cli_errors',
+    # Prompt builder
+    'build_generation_prompt',
+    'clean_llm_response',
+    'normalize_identifier',
+    'strip_markdown_code_block',
+    # File processing
+    'is_binary_file',
+    'find_git_root',
+    'find_aiignore_files',
+    'load_aiignore_spec',
+    'should_ignore_path',
+    'process_file',
+    'estimate_file_tokens',
+    'get_directory_files',
+    # History
+    'sanitize_sensitive_data',
+    'save_to_history',
+    'calculate_estimated_cost',
+    'update_history_index',
+    'cleanup_old_history',
 ]

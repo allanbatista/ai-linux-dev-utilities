@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from ab_cli.core.config import get_config
+from ab_cli.utils.error_handling import handle_cli_errors
 
 # ANSI color codes
 RED = '\033[0;31m'
@@ -351,6 +352,7 @@ def cmd_info(args) -> None:
         print_model_info(model)
 
 
+@handle_cli_errors
 def main():
     parser = argparse.ArgumentParser(
         description='List and explore available LLM models from OpenRouter',

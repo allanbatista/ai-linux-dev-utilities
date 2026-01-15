@@ -20,28 +20,48 @@ Example `~/.ab/config.json`:
 Flag `--set-default-model <model>` to **persist** the default model.
 """
 import argparse
-import datetime
 import json
-import os
 import pathlib
-import re
-import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict
 
 import pyperclip
-import requests
-
-from binaryornot.check import is_binary
-import pathspec
 
 from ab_cli.core.config import get_config
+from ab_cli.utils.error_handling import handle_cli_errors
+from ab_cli.utils.api import (
+    send_to_openrouter,
+    build_specialist_prefix,
+    set_verbose as set_api_verbose,
+    pp,
+)
+from ab_cli.utils.file_processing import (
+    is_binary_file,
+    find_aiignore_files,
+    load_aiignore_spec,
+    should_ignore_path,
+    process_file,
+)
+from ab_cli.utils.history import (
+    sanitize_sensitive_data,
+    save_to_history,
+)
+
+# Re-export for backward compatibility (tests import these from prompt.py)
+__all__ = [
+    'main',
+    'send_to_openrouter',
+    'sanitize_sensitive_data',
+    'save_to_history',
+]
 
 VERBOSE = True
 
-def pp(*args, **kwargs):
-    if VERBOSE:
-        print(*args, **kwargs)
+
+def _sync_verbose():
+    """Sync the VERBOSE flag with the api module."""
+    set_api_verbose(VERBOSE)
+
 
 # =========================
 # Utilities and Persistence
@@ -80,578 +100,6 @@ def persist_default_model(new_model: str) -> bool:
 
 
 # =========================
-# Providers
-# =========================
-
-def build_specialist_prefix(specialist: Optional[str]) -> str:
-    specialist_prompts = {
-        'dev': 'Act as a senior programmer specialized in software development, with over 20 years of experience. Your responses should be clear, efficient, well-structured and follow industry best practices. Think step by step.',
-        'rm': 'Act as a senior Retail Media analyst, specialized in digital advertising strategies for e-commerce and marketplaces. Your knowledge covers platforms like Amazon Ads, Mercado Ads and Criteo. Your responses should be analytical, strategic and data-driven.'
-    }
-    return specialist_prompts.get(specialist or "", "")
-
-
-def send_to_openrouter(prompt: str, context: str, lang: str, specialist: Optional[str],
-                        model_name: str, timeout_s: int, max_completion_tokens: int = 256,
-                        api_key_env: str = "OPENROUTER_API_KEY",
-                        api_base: str = "https://openrouter.ai/api/v1") -> Optional[Dict[str, Any]]:
-    """
-    Sends the prompt and context to the OpenRouter API (OpenAI compatible).
-    """
-    api_key = os.getenv(api_key_env)
-    if not api_key:
-        # Always print error to stderr, regardless of VERBOSE
-        print(f"Error: The environment variable {api_key_env} is not defined.", file=sys.stderr)
-        return None
-
-    # Build full prompt
-    parts = []
-    specialist_prefix = build_specialist_prefix(specialist)
-    if specialist_prefix:
-        parts.append(specialist_prefix)
-
-    parts.append(prompt)
-
-    if context.strip():
-        parts.append("\n--- FILE CONTEXT ---\n" + context)
-
-    parts.append(f"--- OUTPUT INSTRUCTION ---\nRespond strictly in language: {lang}.")
-
-    full_prompt = "\n\n".join(parts)
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    url = f"{api_base.rstrip('/')}/chat/completions"
-
-    messages = [{"role": "user", "content": full_prompt}]
-    if specialist_prefix:
-        messages.insert(0, {"role": "system", "content": specialist_prefix})
-
-    payload = {
-        "model": model_name,
-        "messages": messages,
-    }
-
-    if max_completion_tokens > 0:
-        payload["max_tokens"] = max_completion_tokens
-
-    try:
-        pp(f"Sending request to OpenRouter ({model_name})...")
-        response = requests.post(url, headers=headers, json=payload, timeout=timeout_s)
-        response.raise_for_status()
-        data = response.json()
-
-        message = data['choices'][0]['message']
-        text_response = message.get('content') or ''
-
-        # Handle reasoning models (gpt-5, o1, o3, etc.) that put response in reasoning field
-        if not text_response and 'reasoning' in message:
-            # For simple tasks, try to extract the final answer from reasoning
-            reasoning = message.get('reasoning', '')
-            # If the model ran out of tokens, reasoning might contain a partial answer
-            if reasoning:
-                pp(f"Note: Using reasoning field (model: {model_name}, content was empty)")
-                text_response = reasoning
-
-        usage = data.get("usage", {})
-        prompt_tokens = usage.get("prompt_tokens", "N/A")
-        response_tokens = usage.get("completion_tokens", "N/A")
-
-        return {
-            "provider": "openrouter",
-            "model": model_name,
-            "text": text_response,
-            "prompt_tokens": prompt_tokens,
-            "response_tokens": response_tokens,
-            "full_prompt": full_prompt,
-        }
-
-    except requests.exceptions.RequestException as e:
-        # Always print errors to stderr regardless of VERBOSE mode
-        print(f"Network or HTTP error calling OpenRouter: {e}", file=sys.stderr)
-        if getattr(e, 'response', None) is not None:
-            try:
-                print(f"Error details: {e.response.text}", file=sys.stderr)
-            except Exception:
-                pass
-        return None
-    except (KeyError, IndexError) as e:
-        print(f"Error extracting content from response: {e}", file=sys.stderr)
-        try:
-            print(f"Response structure received: {response.json()}", file=sys.stderr)
-        except Exception:
-            pass
-        return None
-    except Exception as e:
-        print(f"Unexpected error: {e}", file=sys.stderr)
-        return None
-
-
-# =========================
-# History and Persistence
-# =========================
-
-
-def sanitize_sensitive_data(text: str) -> str:
-    """
-    Sanitize sensitive data from text before saving to history.
-
-    Patterns sanitized:
-    - API keys (various formats)
-    - Passwords and secrets
-    - Tokens and credentials
-    """
-    if not text:
-        return text
-
-    # Patterns to sanitize (key=value format)
-    patterns = [
-        # API keys
-        (r'(api[_-]?key\s*[=:]\s*)["\']?[\w-]{20,}["\']?', r'\1[REDACTED]'),
-        (r'(OPENROUTER_API_KEY\s*[=:]\s*)["\']?[\w-]+["\']?', r'\1[REDACTED]'),
-        (r'(sk-[a-zA-Z0-9]{20,})', '[REDACTED_API_KEY]'),
-        # Passwords
-        (r'(password\s*[=:]\s*)["\']?[^\s"\']+["\']?', r'\1[REDACTED]', re.IGNORECASE),
-        (r'(passwd\s*[=:]\s*)["\']?[^\s"\']+["\']?', r'\1[REDACTED]', re.IGNORECASE),
-        (r'(pwd\s*[=:]\s*)["\']?[^\s"\']+["\']?', r'\1[REDACTED]', re.IGNORECASE),
-        # Tokens and secrets
-        (r'(secret\s*[=:]\s*)["\']?[\w-]+["\']?', r'\1[REDACTED]', re.IGNORECASE),
-        (r'(token\s*[=:]\s*)["\']?[\w-]{20,}["\']?', r'\1[REDACTED]', re.IGNORECASE),
-        (r'(auth\s*[=:]\s*)["\']?[\w-]+["\']?', r'\1[REDACTED]', re.IGNORECASE),
-        # Bearer tokens
-        (r'(Bearer\s+)[a-zA-Z0-9._-]{20,}', r'\1[REDACTED]'),
-        # Basic auth
-        (r'(Basic\s+)[a-zA-Z0-9+/=]{20,}', r'\1[REDACTED]'),
-    ]
-
-    result = text
-    for pattern_tuple in patterns:
-        if len(pattern_tuple) == 3:
-            pattern, replacement, flags = pattern_tuple
-            result = re.sub(pattern, replacement, result, flags=flags)
-        else:
-            pattern, replacement = pattern_tuple
-            result = re.sub(pattern, replacement, result)
-
-    return result
-
-
-def save_to_history(full_prompt: str, response_text: str, result: Dict[str, Any],
-                     files_info: Dict[str, Any], args: argparse.Namespace) -> None:
-    """
-    Save full interaction history with LLM to ~/.ab/history/
-
-    Respects config history.enabled setting.
-    Sanitizes sensitive data before saving.
-
-    Information saved:
-    - Request timestamp
-    - Provider and model used
-    - Full prompt and response (sanitized)
-    - Token metrics (prompt, response, total)
-    - Processed files information
-    - Configuration used (specialist, language, etc)
-    - Prompt hash to avoid duplicates
-    """
-    try:
-        import hashlib
-
-        # Check if history is enabled
-        config = get_config()
-        if not config.get_with_default('history.enabled'):
-            return
-
-        # Sanitize sensitive data
-        sanitized_prompt = sanitize_sensitive_data(full_prompt)
-        sanitized_response = sanitize_sensitive_data(response_text)
-
-        # History directory
-        history_dir = pathlib.Path.home() / ".ab" / "history"
-        history_dir.mkdir(parents=True, exist_ok=True)
-
-        # Filename based on timestamp
-        timestamp = datetime.datetime.now()
-        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
-
-        # Prompt hash for unique reference
-        prompt_hash = hashlib.md5(full_prompt.encode('utf-8')).hexdigest()[:8]
-
-        # Full data structure
-        history_entry = {
-            "metadata": {
-                "timestamp": timestamp.isoformat(),
-                "timestamp_formatted": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                "prompt_hash": prompt_hash,
-                "session_id": f"{timestamp_str}_{prompt_hash}"
-            },
-            "provider_info": {
-                "provider": result.get('provider', 'unknown'),
-                "model": result.get('model', 'unknown'),
-                "api_version": result.get('api_version', 'N/A')
-            },
-            "tokens": {
-                "prompt_tokens": result.get('prompt_tokens', 'N/A'),
-                "response_tokens": result.get('response_tokens', 'N/A'),
-                "total_tokens": (
-                    result.get('prompt_tokens', 0) + result.get('response_tokens', 0)
-                    if isinstance(result.get('prompt_tokens'), int) and isinstance(result.get('response_tokens'), int)
-                    else 'N/A'
-                ),
-                "estimated_cost_usd": calculate_estimated_cost(
-                    result.get('model', ''),
-                    result.get('prompt_tokens', 0),
-                    result.get('response_tokens', 0)
-                )
-            },
-            "files_info": {
-                "processed_count": files_info.get('processed', 0),
-                "error_count": files_info.get('errors', 0),
-                "skipped_count": files_info.get('skipped', 0),
-                "total_words": files_info.get('words', 0),
-                "total_estimated_tokens": files_info.get('tokens', 0),
-                "file_list": files_info.get('file_list', [])
-            },
-            "configuration": {
-                "specialist": args.specialist if hasattr(args, 'specialist') else None,
-                "language": args.lang if hasattr(args, 'lang') else 'en',
-                "max_tokens": args.max_tokens if hasattr(args, 'max_tokens') else None,
-                "max_tokens_doc": args.max_tokens_doc if hasattr(args, 'max_tokens_doc') else None,
-                "max_completion_tokens": 0 if getattr(args, 'unlimited', False) else (args.max_completion_tokens if hasattr(args, 'max_completion_tokens') else 16000),
-                "path_format": (
-                    'relative' if args.relative_paths else
-                    'name_only' if args.filename_only else
-                    'full'
-                ) if hasattr(args, 'relative_paths') else 'full'
-            },
-            "content": {
-                "prompt": {
-                    "full": sanitized_prompt,
-                    "length_chars": len(sanitized_prompt),
-                    "length_words": len(sanitized_prompt.split())
-                },
-                "response": {
-                    "full": sanitized_response,
-                    "length_chars": len(sanitized_response),
-                    "length_words": len(sanitized_response.split()),
-                    "preview": sanitized_response[:500] + "..." if len(sanitized_response) > 500 else sanitized_response
-                }
-            },
-            "statistics": {
-                "prompt_to_response_ratio": round(len(sanitized_response) / len(sanitized_prompt), 2) if sanitized_prompt else 0,
-                "avg_response_word_length": round(len(sanitized_response) / max(len(sanitized_response.split()), 1), 2),
-                "response_lines": sanitized_response.count('\n') + 1
-            }
-        }
-
-        # Save individual file
-        history_file = history_dir / f"history_{timestamp_str}_{prompt_hash}.json"
-        with open(history_file, 'w', encoding='utf-8') as f:
-            json.dump(history_entry, f, indent=2, ensure_ascii=False)
-
-        # Update master index
-        update_history_index(history_dir, history_entry)
-
-        pp(f"History saved: {history_file}")
-
-    except Exception as e:
-        pp(f"Warning: Could not save history: {e}")
-
-
-def calculate_estimated_cost(model: str, prompt_tokens: int, response_tokens: int) -> float:
-    """
-    Calculate estimated cost based on model and tokens used.
-    Approximate values (may vary).
-    """
-    if not isinstance(prompt_tokens, int) or not isinstance(response_tokens, int):
-        return 0.0
-
-    # Approximate prices per 1M tokens (USD) - update as needed
-    pricing = {
-        # OpenAI
-        'gpt-4o': {'prompt': 2.50, 'response': 10.00},
-        'gpt-4o-mini': {'prompt': 0.15, 'response': 0.60},
-        'gpt-4-turbo': {'prompt': 10.00, 'response': 30.00},
-        'gpt-4': {'prompt': 30.00, 'response': 60.00},
-        'gpt-3.5-turbo': {'prompt': 0.50, 'response': 1.50},
-
-        # Google Gemini (estimates)
-        'gemini-1.5-pro': {'prompt': 3.50, 'response': 10.50},
-        'gemini-1.5-flash': {'prompt': 0.075, 'response': 0.30},
-        'gemini-pro': {'prompt': 0.50, 'response': 1.50},
-    }
-
-    # Find model price
-    model_lower = model.lower()
-    price_info = None
-
-    for model_key, prices in pricing.items():
-        if model_key in model_lower:
-            price_info = prices
-            break
-
-    if not price_info:
-        return 0.0
-
-    # Calculate cost
-    prompt_cost = (prompt_tokens / 1_000_000) * price_info['prompt']
-    response_cost = (response_tokens / 1_000_000) * price_info['response']
-
-    return round(prompt_cost + response_cost, 6)
-
-
-def update_history_index(history_dir: pathlib.Path, entry: Dict[str, Any]) -> None:
-    """
-    Update the master index file with interaction summary.
-    """
-    index_file = history_dir / "index.json"
-
-    try:
-        if index_file.exists():
-            with open(index_file, 'r', encoding='utf-8') as f:
-                index = json.load(f)
-        else:
-            index = {
-                "created_at": datetime.datetime.now().isoformat(),
-                "total_interactions": 0,
-                "total_tokens_used": 0,
-                "total_estimated_cost": 0.0,
-                "interactions": []
-            }
-
-        # Add interaction summary
-        summary = {
-            "session_id": entry['metadata']['session_id'],
-            "timestamp": entry['metadata']['timestamp'],
-            "provider": entry['provider_info']['provider'],
-            "model": entry['provider_info']['model'],
-            "tokens": entry['tokens'].get('total_tokens', 'N/A'),
-            "cost": entry['tokens'].get('estimated_cost_usd', 0.0),
-            "files_processed": entry['files_info']['processed_count'],
-            "response_preview": entry['content']['response']['preview']
-        }
-
-        index['interactions'].insert(0, summary)  # Most recent first
-        index['total_interactions'] = len(index['interactions'])
-
-        # Update totals
-        if isinstance(entry['tokens'].get('total_tokens'), int):
-            index['total_tokens_used'] += entry['tokens']['total_tokens']
-
-        if isinstance(entry['tokens'].get('estimated_cost_usd'), (int, float)):
-            index['total_estimated_cost'] += entry['tokens']['estimated_cost_usd']
-            index['total_estimated_cost'] = round(index['total_estimated_cost'], 6)
-
-        # Save index
-        with open(index_file, 'w', encoding='utf-8') as f:
-            json.dump(index, f, indent=2, ensure_ascii=False)
-
-    except Exception as e:
-        pp(f"Warning: Could not update index: {e}")
-
-
-def cleanup_old_history(history_dir: pathlib.Path, keep_last: int = 100) -> None:
-    """
-    Remove old history files, keeping only the last N.
-    """
-    try:
-        history_files = sorted(
-            history_dir.glob("history_*.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )
-
-        if len(history_files) > keep_last:
-            for old_file in history_files[keep_last:]:
-                old_file.unlink()
-
-    except Exception as e:
-        # Non-critical, silent log
-        pass
-
-
-# =========================
-# Binary Detection
-# =========================
-
-def is_binary_file(file_path: pathlib.Path) -> bool:
-    """
-    Detect if a file is binary using the binaryornot library.
-
-    Args:
-        file_path: Path of the file to check.
-
-    Returns:
-        True if the file is binary, False if it's text.
-    """
-    try:
-        return is_binary(str(file_path))
-    except Exception:
-        return True  # If can't read, assume binary
-
-
-# =========================
-# .aiignore Support
-# =========================
-
-def find_git_root(start_path: pathlib.Path) -> Optional[pathlib.Path]:
-    """
-    Find the git repository root from the starting path.
-
-    Args:
-        start_path: Starting path for search.
-
-    Returns:
-        Git root path or None if not in a repository.
-    """
-    try:
-        result = subprocess.run(
-            ['git', 'rev-parse', '--show-toplevel'],
-            capture_output=True, text=True, cwd=str(start_path)
-        )
-        if result.returncode == 0:
-            return pathlib.Path(result.stdout.strip())
-    except Exception:
-        pass
-    return None
-
-
-def find_aiignore_files(start_path: pathlib.Path) -> List[pathlib.Path]:
-    """
-    Search for .aiignore files from starting directory to git root.
-
-    Args:
-        start_path: Starting path for search.
-
-    Returns:
-        List of .aiignore file paths found (from most specific to most general).
-    """
-    aiignore_files = []
-    current = start_path.resolve()
-    git_root = find_git_root(current)
-
-    while current != current.parent:
-        aiignore_path = current / '.aiignore'
-        if aiignore_path.exists() and aiignore_path.is_file():
-            aiignore_files.append(aiignore_path)
-
-        # Stop at git root if found
-        if git_root and current == git_root:
-            break
-
-        current = current.parent
-
-    return aiignore_files
-
-
-def load_aiignore_spec(aiignore_files: List[pathlib.Path]) -> Optional[pathspec.GitIgnoreSpec]:
-    """
-    Load and combine patterns from multiple .aiignore files.
-
-    Args:
-        aiignore_files: List of .aiignore paths (from most specific to most general).
-
-    Returns:
-        Combined spec or None if no patterns.
-    """
-    all_patterns = []
-
-    # Process from most general (root) to most specific
-    for aiignore_path in reversed(aiignore_files):
-        try:
-            with open(aiignore_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-            all_patterns.extend(lines)
-        except Exception as e:
-            pp(f"Warning: Error reading {aiignore_path}: {e}")
-
-    if not all_patterns:
-        return None
-
-    return pathspec.GitIgnoreSpec.from_lines(all_patterns)
-
-
-def should_ignore_path(
-    file_path: pathlib.Path,
-    spec: Optional[pathspec.GitIgnoreSpec],
-    base_path: pathlib.Path
-) -> bool:
-    """
-    Check if a file should be ignored based on .aiignore patterns.
-
-    Args:
-        file_path: Absolute path of the file.
-        spec: Compiled GitIgnore spec (or None).
-        base_path: Base path for relative path calculation.
-
-    Returns:
-        True if the file should be ignored.
-    """
-    if spec is None:
-        return False
-
-    try:
-        rel_path = file_path.relative_to(base_path)
-        return spec.match_file(str(rel_path))
-    except ValueError:
-        # file_path is not relative to base_path
-        return spec.match_file(str(file_path))
-
-
-# =========================
-# File Processing
-# =========================
-
-def process_file(file_path: pathlib.Path, path_format: str, max_tokens_doc: int) -> Tuple[str, int, int]:
-    """
-    Read file content, format header and truncate if necessary based on tokens.
-
-    Args:
-        file_path: Path of the file to process.
-        path_format: How the path should be formatted ('full', 'relative', 'name_only').
-        max_tokens_doc: Maximum estimated tokens for this file.
-
-    Returns:
-        Tuple containing formatted content, word count and estimated tokens.
-    """
-    try:
-        display_path = ""
-        if path_format == 'name_only':
-            display_path = file_path.name
-        elif path_format == 'relative':
-            display_path = os.path.relpath(file_path.resolve(), pathlib.Path.cwd())
-        else: # 'full'
-            display_path = str(file_path.resolve())
-
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-
-        original_tokens = len(content) // 4
-        warning_message = ""
-
-        if original_tokens > max_tokens_doc:
-            max_chars = max_tokens_doc * 4
-            content = content[:max_chars]
-            warning_message = (
-                f"// warning_content_truncated=\"true\" "
-                f"original_token_count=\"{original_tokens}\" "
-                f"new_token_count=\"{max_tokens_doc}\"\n"
-            )
-            pp(f"  -> Warning: File '{display_path}' was truncated to ~{max_tokens_doc} tokens.")
-
-        word_count = len(content.split())
-        estimated_tokens = len(content) // 4
-        formatted_content = f"// filename=\"{display_path}\"\n{warning_message}{content}\n"
-
-        return formatted_content, word_count, estimated_tokens
-    except Exception as e:
-        error_message = f"// error_processing_file=\"{file_path.resolve()}\"\n// Error: {e}\n"
-        return error_message, 0, 0
-
-
-# =========================
 # Effective Configuration
 # =========================
 
@@ -681,6 +129,8 @@ def resolve_settings(args, config: Dict[str, Any]) -> Dict[str, Any]:
 # Main
 # =========================
 
+
+@handle_cli_errors
 def main():
     """Main function that orchestrates script execution."""
     parser = argparse.ArgumentParser(
@@ -789,6 +239,7 @@ def main():
 
     global VERBOSE
     VERBOSE = not args.only_output
+    _sync_verbose()
 
     # Update default model if requested
     if args.set_default_model:
@@ -931,7 +382,7 @@ def main():
 
                     try:
                         text = json.dumps(json.loads(text), indent=4)
-                    except:
+                    except Exception:
                         pass
 
                 print(text, flush=True)

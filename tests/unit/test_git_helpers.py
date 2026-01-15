@@ -1,9 +1,7 @@
 """Unit tests for ab_cli.utils.git_helpers module."""
 import subprocess
 
-import pytest
-
-from ab_cli.utils.git_helpers import get_commit_diff, run_git
+from ab_cli.utils.git_helpers import get_commit_diff
 
 
 class TestRunGit:

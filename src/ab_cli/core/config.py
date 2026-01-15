@@ -7,6 +7,60 @@ import os
 import pathlib
 from typing import Any, Dict, Optional
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+
+# Pydantic models for configuration validation
+class GlobalConfigModel(BaseModel):
+    """Configuration for global settings."""
+    model_config = ConfigDict(extra='allow')
+
+    language: str = "en"
+    api_base: str = "https://openrouter.ai/api/v1"
+    api_key_env: str = "OPENROUTER_API_KEY"
+    timeout_seconds: int = Field(default=300, gt=0, le=600)
+
+
+class ThresholdsModel(BaseModel):
+    """Configuration for model selection thresholds."""
+    model_config = ConfigDict(extra='allow')
+
+    small_max_tokens: int = Field(default=128000, gt=0)
+    medium_max_tokens: int = Field(default=256000, gt=0)
+
+
+class ModelsConfigModel(BaseModel):
+    """Configuration for LLM models."""
+    model_config = ConfigDict(extra='allow')
+
+    small: str = "nvidia/nemotron-3-nano-30b-a3b:free"
+    medium: str = "openai/gpt-5-nano"
+    large: str = "x-ai/grok-4.1-fast"
+    default: str = "nvidia/nemotron-3-nano-30b-a3b:free"
+    thresholds: ThresholdsModel = Field(default_factory=ThresholdsModel)
+
+
+class HistoryConfigModel(BaseModel):
+    """Configuration for history tracking."""
+    model_config = ConfigDict(extra='allow')
+
+    enabled: bool = True
+    directory: str = ""
+
+
+class AbConfigModel(BaseModel):
+    """Root configuration model for ab CLI."""
+    model_config = ConfigDict(extra='allow', populate_by_name=True)
+
+    version: str = "1.0"
+    global_settings: GlobalConfigModel = Field(
+        default_factory=GlobalConfigModel,
+        alias="global"
+    )
+    models: ModelsConfigModel = Field(default_factory=ModelsConfigModel)
+    commands: Dict[str, Any] = Field(default_factory=dict)
+    history: HistoryConfigModel = Field(default_factory=HistoryConfigModel)
+
 AB_CONFIG_DIR = pathlib.Path.home() / ".ab"
 AB_CONFIG_FILE = AB_CONFIG_DIR / "config.json"
 AB_HISTORY_DIR = AB_CONFIG_DIR / "history"
@@ -52,17 +106,29 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+class ConfigValidationError(Exception):
+    """Raised when configuration validation fails."""
+
+    def __init__(self, message: str, errors: list = None):
+        super().__init__(message)
+        self.errors = errors or []
+
+
 class AbConfig:
     """Configuration manager for ab CLI (singleton)."""
 
     _instance: Optional['AbConfig'] = None
     _config: Dict[str, Any]
+    _validated_model: Optional[AbConfigModel] = None
+    _validation_errors: list = []
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._config = {}
             cls._instance._loaded = False
+            cls._instance._validated_model = None
+            cls._instance._validation_errors = []
         return cls._instance
 
     def _ensure_loaded(self) -> None:
@@ -72,16 +138,86 @@ class AbConfig:
 
     def _load(self) -> None:
         """Load configuration from file or use defaults."""
+        self._validation_errors = []
+        self._validated_model = None
+
         if AB_CONFIG_FILE.exists():
             try:
                 with open(AB_CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    self._config = json.load(f)
+                    raw_config = json.load(f)
+                # Validate with Pydantic
+                self._config, self._validated_model = self._validate_config(raw_config)
             except (json.JSONDecodeError, IOError) as e:
                 print(f"Warning: Could not read {AB_CONFIG_FILE}: {e}")
                 self._config = self._deep_copy(DEFAULT_CONFIG)
+                self._validated_model = AbConfigModel.model_validate(self._config)
         else:
             self._config = self._deep_copy(DEFAULT_CONFIG)
+            self._validated_model = AbConfigModel.model_validate(self._config)
         self._loaded = True
+
+    def _validate_config(self, raw_config: Dict[str, Any]) -> tuple:
+        """
+        Validate configuration using Pydantic.
+
+        Returns tuple of (validated_config_dict, validated_model).
+        On validation error, merges with defaults and logs warnings.
+        """
+        try:
+            model = AbConfigModel.model_validate(raw_config)
+            # Convert back to dict using alias for 'global'
+            validated_dict = model.model_dump(by_alias=True)
+            return validated_dict, model
+        except ValidationError as e:
+            self._validation_errors = e.errors()
+            print(f"Warning: Configuration validation failed: {e}")
+            # Merge with defaults to ensure valid config
+            merged = self._deep_merge(self._deep_copy(DEFAULT_CONFIG), raw_config)
+            # Try to validate merged config
+            try:
+                model = AbConfigModel.model_validate(merged)
+                return model.model_dump(by_alias=True), model
+            except ValidationError:
+                # Fall back to defaults entirely
+                model = AbConfigModel.model_validate(DEFAULT_CONFIG)
+                return self._deep_copy(DEFAULT_CONFIG), model
+
+    def validate(self, config_data: Dict[str, Any] = None) -> AbConfigModel:
+        """
+        Validate configuration data and return the Pydantic model.
+
+        Args:
+            config_data: Config dict to validate. If None, validates current config.
+
+        Returns:
+            Validated AbConfigModel instance.
+
+        Raises:
+            ConfigValidationError: If validation fails.
+        """
+        data = config_data if config_data is not None else self._config
+        try:
+            return AbConfigModel.model_validate(data)
+        except ValidationError as e:
+            raise ConfigValidationError(
+                f"Configuration validation failed: {e}",
+                errors=e.errors()
+            )
+
+    def get_validated_model(self) -> Optional[AbConfigModel]:
+        """Get the validated Pydantic model for the current config."""
+        self._ensure_loaded()
+        return self._validated_model
+
+    def get_validation_errors(self) -> list:
+        """Get any validation errors from the last load."""
+        self._ensure_loaded()
+        return self._validation_errors
+
+    def has_validation_errors(self) -> bool:
+        """Check if there were validation errors during load."""
+        self._ensure_loaded()
+        return len(self._validation_errors) > 0
 
     def _deep_copy(self, d: Dict[str, Any]) -> Dict[str, Any]:
         """Deep copy a dictionary."""
