@@ -14,6 +14,7 @@ import tempfile
 from pathlib import Path
 
 from ab_cli.core.config import get_language
+from ab_cli.core.llm_settings import add_llm_request_arguments
 from ab_cli.utils import (
     call_llm_with_model_info,
     log_info,
@@ -149,7 +150,9 @@ def get_file_extension(lang: str) -> str:
 
 def generate_script(description: str, lang: str, script_type: str,
                     system_context: str, dir_listing: str,
-                    output_lang: str, full_script: bool = False) -> str:
+                    output_lang: str, full_script: bool = False,
+                    reasoning_effort: str = None,
+                    service_tier: str = None) -> str:
     """Generate script using LLM."""
     # Determine if we should generate a full script or a minimal one-liner
     if full_script or script_type == 'script':
@@ -227,7 +230,10 @@ Return ONLY the command:"""
 
     try:
         result, selected_model, _ = call_llm_with_model_info(
-            prompt_text, lang=output_lang
+            prompt_text,
+            lang=output_lang,
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
         )
 
         log_info(f"Using model: {selected_model}")
@@ -306,6 +312,7 @@ Examples:
         default=None,
         help='Output language for comments (default: en)'
     )
+    add_llm_request_arguments(parser)
 
     args = parser.parse_args()
 
@@ -330,7 +337,9 @@ Examples:
     script = generate_script(
         args.description, args.lang, args.script_type,
         system_context, dir_listing, output_lang,
-        full_script=use_full_script
+        full_script=use_full_script,
+        reasoning_effort=args.reasoning_effort,
+        service_tier=args.service_tier,
     )
 
     if not script:

@@ -17,7 +17,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "language": "en",
         "api_base": "https://openrouter.ai/api/v1",
         "api_key_env": "OPENROUTER_API_KEY",
-        "timeout_seconds": 300
+        "timeout_seconds": 300,
+        "reasoning_effort": "medium",
+        "service_tier": "default"
     },
     "models": {
         "small": "nvidia/nemotron-3-nano-30b-a3b:free",
@@ -209,6 +211,8 @@ class AbConfig:
             'api_base': self.get_with_default('global.api_base'),
             'api_key_env': self.get_with_default('global.api_key_env'),
             'timeout_seconds': self.get_with_default('global.timeout_seconds'),
+            'reasoning_effort': self.get_with_default('global.reasoning_effort'),
+            'service_tier': self.get_with_default('global.service_tier'),
         }
 
     def get_history_dir(self) -> pathlib.Path:

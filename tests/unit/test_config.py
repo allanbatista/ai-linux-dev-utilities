@@ -269,6 +269,8 @@ class TestAbConfigMisc:
         assert "api_base" in settings
         assert "api_key_env" in settings
         assert "timeout_seconds" in settings
+        assert settings["reasoning_effort"] == "medium"
+        assert settings["service_tier"] == "default"
 
 
 class TestEstimateTokens:

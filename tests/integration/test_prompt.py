@@ -12,6 +12,8 @@ class TestLoadConfig:
 
         config = get_config()
         assert config.get_with_default("global.api_base") == "https://openrouter.ai/api/v1"
+        assert config.get_with_default("global.reasoning_effort") == "medium"
+        assert config.get_with_default("global.service_tier") == "default"
 
 
 class TestPersistDefaultModel:
@@ -35,7 +37,8 @@ class TestApiCalls:
 
     def test_send_to_openrouter_success(self, mock_requests, mock_env, temp_config_dir):
         """API call succeeds with valid response."""
-        # Import after patching
+        from ab_cli.commands.prompt import send_to_openrouter
+
         response = mock_requests.return_value
         response.status_code = 200
         response.json.return_value = {
@@ -43,8 +46,49 @@ class TestApiCalls:
             "usage": {"prompt_tokens": 100, "completion_tokens": 50}
         }
 
-        # Verify mock is set up
-        assert response.status_code == 200
+        result = send_to_openrouter(
+            "Explain this",
+            "",
+            "en",
+            None,
+            "test/model",
+            30,
+            max_completion_tokens=128,
+            reasoning_effort="medium",
+            service_tier="flex",
+        )
+
+        assert result["text"] == "Test response"
+        payload = mock_requests.call_args.kwargs["json"]
+        assert payload["reasoning"] == {"effort": "medium"}
+        assert payload["service_tier"] == "flex"
+
+    def test_send_to_openrouter_omits_default_service_tier(self, mock_requests, mock_env, temp_config_dir):
+        """Default service tier is not sent explicitly."""
+        from ab_cli.commands.prompt import send_to_openrouter
+
+        response = mock_requests.return_value
+        response.status_code = 200
+        response.json.return_value = {
+            "choices": [{"message": {"content": "Test response"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50}
+        }
+
+        result = send_to_openrouter(
+            "Explain this",
+            "",
+            "en",
+            None,
+            "test/model",
+            30,
+            max_completion_tokens=128,
+            reasoning_effort="medium",
+            service_tier="default",
+        )
+
+        assert result["text"] == "Test response"
+        payload = mock_requests.call_args.kwargs["json"]
+        assert "service_tier" not in payload
 
     def test_send_to_openrouter_no_api_key(self, temp_config_dir, monkeypatch):
         """Returns error without API key."""

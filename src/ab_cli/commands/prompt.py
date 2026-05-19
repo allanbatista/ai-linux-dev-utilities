@@ -10,7 +10,9 @@ Example `~/.ab/config.json`:
     "language": "en",
     "api_base": "https://openrouter.ai/api/v1",
     "api_key_env": "OPENROUTER_API_KEY",
-    "timeout_seconds": 300
+    "timeout_seconds": 300,
+    "reasoning_effort": "medium",
+    "service_tier": "default"
   },
   "models": {
     "default": "nvidia/nemotron-3-nano-30b-a3b:free"
@@ -36,6 +38,7 @@ from binaryornot.check import is_binary
 import pathspec
 
 from ab_cli.core.config import get_config
+from ab_cli.core.llm_settings import add_llm_request_arguments
 
 VERBOSE = True
 
@@ -51,14 +54,14 @@ def load_config() -> Dict[str, Any]:
     """Load config from ~/.ab/config.json using centralized config module."""
     try:
         config = get_config()
-        # Return in legacy format for compatibility
+        api_settings = config.get_api_settings()
         return {
             "model": config.get("models.default"),
-            "api_base": config.get("global.api_base"),
-            "api_key_env": config.get("global.api_key_env"),
-            "request": {
-                "timeout_seconds": config.get("global.timeout_seconds", 300)
-            }
+            "api_base": api_settings["api_base"],
+            "api_key_env": api_settings["api_key_env"],
+            "timeout_s": api_settings["timeout_seconds"],
+            "reasoning_effort": api_settings["reasoning_effort"],
+            "service_tier": api_settings["service_tier"],
         }
     except Exception as e:
         pp(f"Warning: could not read config: {e}")
@@ -93,6 +96,8 @@ def build_specialist_prefix(specialist: Optional[str]) -> str:
 
 def send_to_openrouter(prompt: str, context: str, lang: str, specialist: Optional[str],
                         model_name: str, timeout_s: int, max_completion_tokens: int = 256,
+                        reasoning_effort: Optional[str] = None,
+                        service_tier: Optional[str] = None,
                         api_key_env: str = "OPENROUTER_API_KEY",
                         api_base: str = "https://openrouter.ai/api/v1") -> Optional[Dict[str, Any]]:
     """
@@ -134,6 +139,12 @@ def send_to_openrouter(prompt: str, context: str, lang: str, specialist: Optiona
         "model": model_name,
         "messages": messages,
     }
+
+    if reasoning_effort:
+        payload["reasoning"] = {"effort": reasoning_effort}
+
+    if service_tier and service_tier != "default":
+        payload["service_tier"] = service_tier
 
     if max_completion_tokens > 0:
         payload["max_tokens"] = max_completion_tokens
@@ -656,7 +667,7 @@ def process_file(file_path: pathlib.Path, path_format: str, max_tokens_doc: int)
 # =========================
 
 def resolve_settings(args, config: Dict[str, Any]) -> Dict[str, Any]:
-    """Resolve model/timeout/api_base/api_key_env from args + config."""
+    """Resolve model/timeout/api_base/api_key_env and LLM overrides."""
     # Model precedence: CLI > config > default
     model = args.model or config.get("model") or "nvidia/nemotron-3-nano-30b-a3b:free"
 
@@ -667,13 +678,19 @@ def resolve_settings(args, config: Dict[str, Any]) -> Dict[str, Any]:
     api_base = config.get("api_base") or "https://openrouter.ai/api/v1"
 
     # Timeout
-    timeout_s = int(config.get("request", {}).get("timeout_seconds", 300))
+    timeout_s = int(config.get("timeout_s", 300))
+
+    # Reasoning / service tier
+    reasoning_effort = args.reasoning_effort or config.get("reasoning_effort") or "medium"
+    service_tier = args.service_tier or config.get("service_tier") or "default"
 
     return {
         "model": model,
         "api_key_env": api_key_env,
         "api_base": api_base,
         "timeout_s": timeout_s,
+        "reasoning_effort": reasoning_effort,
+        "service_tier": service_tier,
     }
 
 
@@ -752,6 +769,7 @@ def main():
         type=str,
         help='Set and persist the default model (top-level "model") in ~/.ab/config.json and exit.'
     )
+    add_llm_request_arguments(parser)
     parser.add_argument(
         '--only-output',
         action='store_true',
@@ -899,11 +917,15 @@ def main():
         timeout_s = settings["timeout_s"]
         api_key_env = settings["api_key_env"]
         api_base = settings["api_base"]
+        reasoning_effort = settings["reasoning_effort"]
+        service_tier = settings["service_tier"]
 
         max_tokens = 0 if args.unlimited else args.max_completion_tokens
         result = send_to_openrouter(
             args.prompt, final_text, args.lang, args.specialist,
             model, timeout_s, max_tokens,
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
             api_key_env=api_key_env, api_base=api_base
         )
 

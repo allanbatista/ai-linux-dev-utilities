@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 from ab_cli.core.config import get_language
+from ab_cli.core.llm_settings import add_llm_request_arguments
 from ab_cli.utils import (
     call_llm_with_model_info,
     log_info,
@@ -93,7 +94,9 @@ def create_pr(title: str, body: str, base_branch: str, draft: bool = False) -> s
 
 def generate_pr_content(commits: str, diff: str, files_changed: str,
                         current_branch: str, base_branch: str,
-                        lang: str) -> tuple:
+                        lang: str,
+                        reasoning_effort: str = None,
+                        service_tier: str = None) -> tuple:
     """Generate PR title and description using LLM."""
     prompt_text = f"""Analyze the commits and changes below and generate title and description for a Pull Request.
 
@@ -135,7 +138,10 @@ DESCRIPTION:
 
     try:
         result, selected_model, estimated_tokens = call_llm_with_model_info(
-            prompt_text, lang=lang
+            prompt_text,
+            lang=lang,
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
         )
 
         log_info(f"Estimated tokens: ~{estimated_tokens} | Model: {selected_model} | Lang: {lang}")
@@ -196,6 +202,7 @@ Examples:
                         help=f'Output language (default: {get_language("pr-description")})')
     parser.add_argument('-y', '--yes', action='store_true',
                         help='Skip confirmation')
+    add_llm_request_arguments(parser)
 
     args = parser.parse_args()
 
@@ -259,7 +266,9 @@ Examples:
     pr_title, pr_body = generate_pr_content(
         commits, diff, files_changed,
         current_branch, base_branch,
-        args.lang
+        args.lang,
+        reasoning_effort=args.reasoning_effort,
+        service_tier=args.service_tier,
     )
 
     if not pr_title:

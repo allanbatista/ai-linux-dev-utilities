@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Optional, Tuple
 
 from ab_cli.core.config import get_config, get_language
+from ab_cli.core.llm_settings import add_llm_request_arguments
 from ab_cli.utils import (
     call_llm,
     log_info,
@@ -58,7 +59,11 @@ def create_backup_branch(name: Optional[str] = None) -> str:
     return name
 
 
-def needs_rewrite_llm(msg: str) -> bool:
+def needs_rewrite_llm(
+    msg: str,
+    reasoning_effort: str = None,
+    service_tier: str = None,
+) -> bool:
     """Use LLM to evaluate if commit message needs rewrite."""
     prompt_text = f"""Analyze this git commit message and respond ONLY with 'YES' or 'NO'.
 Does this message need to be rewritten? Consider:
@@ -71,7 +76,12 @@ Message: {msg}
 Respond ONLY 'YES' if it needs rewrite, 'NO' if it's acceptable:"""
 
     try:
-        result = call_llm(prompt_text, lang="en")
+        result = call_llm(
+            prompt_text,
+            lang="en",
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
+        )
 
         if not result:
             return False
@@ -83,7 +93,9 @@ Respond ONLY 'YES' if it needs rewrite, 'NO' if it's acceptable:"""
 
 
 def generate_new_message(commit_hash: str, original_msg: str, diff: str,
-                         files_changed: str, lang: str) -> Optional[str]:
+                         files_changed: str, lang: str,
+                         reasoning_effort: str = None,
+                         service_tier: str = None) -> Optional[str]:
     """Generate new commit message using LLM."""
     prompt_text = f"""Analyze the git changes below and generate ONLY the commit message, without additional explanations.
 
@@ -109,7 +121,12 @@ DIFF:
 Respond ONLY with the commit message:
 """
 
-    result = call_llm(prompt_text, lang=lang)
+    result = call_llm(
+        prompt_text,
+        lang=lang,
+        reasoning_effort=reasoning_effort,
+        service_tier=service_tier,
+    )
 
     if not result:
         return None
@@ -184,12 +201,17 @@ Examples:
                         help='Name for backup branch')
     parser.add_argument('revision_range', nargs='?', default='',
                         help='Revision range (e.g., HEAD~5..HEAD)')
+    add_llm_request_arguments(parser)
 
     args = parser.parse_args()
 
     # Handle flag conflicts
     skip_merges = args.skip_merges and not args.include_merges
     smart_mode = args.smart and not args.force_all
+    llm_options = {
+        "reasoning_effort": args.reasoning_effort,
+        "service_tier": args.service_tier,
+    }
 
     # Check if inside git repo
     if not is_git_repo():
@@ -299,7 +321,7 @@ Examples:
                 print(f"  {BLUE}→ Marked for rewrite (< 5 words){NC}")
             elif smart_mode:
                 print("  Evaluating with LLM... ", end='', flush=True)
-                if needs_rewrite_llm(original_msg):
+                if needs_rewrite_llm(original_msg, **llm_options):
                     should_rewrite = True
                     print(f"{BLUE}needs rewrite{NC}")
                 else:
@@ -317,7 +339,14 @@ Examples:
 
         # Generate new message
         print("  Generating new message... ", end='', flush=True)
-        new_msg = generate_new_message(commit, original_msg, diff, files, args.lang)
+        new_msg = generate_new_message(
+            commit,
+            original_msg,
+            diff,
+            files,
+            args.lang,
+            **llm_options,
+        )
         if not new_msg:
             print(f"{RED}failed{NC}")
             log_error("Failed to generate message")

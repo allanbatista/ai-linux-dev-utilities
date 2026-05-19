@@ -75,6 +75,8 @@ ab config init              # Create default config
 ab config show              # View current config
 ab config set global.language pt-br    # Change language
 ab config set models.default "openai/gpt-4o"  # Change default model
+ab config set global.reasoning_effort medium   # Change reasoning effort
+ab config set global.service_tier default      # Change service tier
 ```
 
 Configuration is stored in `~/.ab/config.json`:
@@ -86,7 +88,9 @@ Configuration is stored in `~/.ab/config.json`:
     "language": "en",
     "api_base": "https://openrouter.ai/api/v1",
     "api_key_env": "OPENROUTER_API_KEY",
-    "timeout_seconds": 300
+    "timeout_seconds": 300,
+    "reasoning_effort": "medium",
+    "service_tier": "default"
   },
   "models": {
     "default": "nvidia/nemotron-3-nano-30b-a3b:free",
@@ -96,6 +100,8 @@ Configuration is stored in `~/.ab/config.json`:
   }
 }
 ```
+
+All LLM-backed commands accept `--reasoning-effort` and `--service-tier` to override these config values per invocation.
 
 ---
 
@@ -222,6 +228,8 @@ ab prompt [OPTIONS] [PATH...]
 | `--max-completion-tokens N` | `-m` | Max tokens for response | 16000 |
 | `--unlimited` | `-u` | No limit on response tokens | false |
 | `--model NAME` | - | OpenRouter model name | config default |
+| `--reasoning-effort VALUE` | - | OpenRouter reasoning effort | config default |
+| `--service-tier VALUE` | - | OpenRouter service tier | config default |
 | `--specialist TYPE` | `-s` | Persona: `dev` or `rm` | - |
 | `--set-default-model NAME` | - | Persist default model to config | - |
 | `--only-output` | - | Return only model response (no logs) | false |
@@ -243,6 +251,9 @@ ab prompt src/ -p "Review for security issues"
 
 # Use specific model
 ab prompt --model "openai/gpt-5" file.py -p "Optimize this"
+
+# Override reasoning behavior and service tier
+ab prompt --reasoning-effort high --service-tier flex file.py -p "Analyze this"
 
 # Read prompt from stdin
 echo "Summarize this code" | ab prompt src/ -p -
@@ -290,7 +301,7 @@ The tool searches for `.aiignore` files from the current directory up to the git
 
 ### ab git auto-commit
 
-Generate commit messages automatically by analyzing staged changes.
+Generate a branch name and commit message automatically from git changes.
 
 **Protected branch detection**: When on `master` or `main`, auto-commit will suggest creating a feature branch before committing.
 
@@ -300,16 +311,32 @@ ab git auto-commit [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-a` | Stage all files (`git add -A`) before committing |
-| `-y` | Skip confirmation prompt |
+| `-f` | Stay on the current branch on protected branches |
+| `-y`, `-a` | Stage all files (`git add -A`) before committing |
+| `-Y` | Skip final commit confirmation |
+| `-s` | Use only files already staged |
+| `-p` | Push the current branch after committing |
+| `-P` | Create a PR with `gh` after pushing (requires `-p`) |
 | `-l LANG` | Output language (default: `en`) |
 
 ```bash
 # Generate and confirm commit message
 ab git auto-commit
 
-# Stage all and commit without confirmation
-ab git auto-commit -a -y
+# Stage all and skip final confirmation
+ab git auto-commit -y -Y
+
+# Use only staged files
+ab git auto-commit -s -Y
+
+# Stay on the current branch
+ab git auto-commit -f
+
+# Push after committing and open a PR from the branch
+ab git auto-commit -y -Y -p -P
+
+# Create a PR from an already committed branch
+ab git auto-commit -P
 ```
 
 ---

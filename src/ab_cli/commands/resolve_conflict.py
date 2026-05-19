@@ -11,6 +11,7 @@ import sys
 from typing import Optional
 
 from ab_cli.core.config import get_language
+from ab_cli.core.llm_settings import add_llm_request_arguments
 from ab_cli.utils import (
     call_llm,
     log_info,
@@ -93,7 +94,9 @@ def get_file_context(filepath: str, conflict: dict, context_lines: int = 10) -> 
 
 
 def resolve_conflict_with_llm(filepath: str, conflict: dict,
-                              lang: str, dry_run: bool = False) -> Optional[str]:
+                              lang: str, dry_run: bool = False,
+                              reasoning_effort: str = None,
+                              service_tier: str = None) -> Optional[str]:
     """Resolve a single conflict using LLM."""
     before_context, after_context = get_file_context(filepath, conflict)
 
@@ -131,7 +134,12 @@ INSTRUCTIONS:
 RESOLVED CODE:"""
 
     try:
-        result = call_llm(prompt_text, lang=lang)
+        result = call_llm(
+            prompt_text,
+            lang=lang,
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
+        )
 
         if not result:
             log_error("API call failed for conflict resolution")
@@ -222,6 +230,7 @@ Examples:
         default=None,
         help='Output language (default: en)'
     )
+    add_llm_request_arguments(parser)
 
     args = parser.parse_args()
 
@@ -269,7 +278,14 @@ Examples:
         for i, conflict in enumerate(conflicts, 1):
             log_info(f"Resolving conflict {i}/{len(conflicts)} in {filepath}...")
 
-            resolved = resolve_conflict_with_llm(filepath, conflict, lang, args.dry_run)
+            resolved = resolve_conflict_with_llm(
+                filepath,
+                conflict,
+                lang,
+                args.dry_run,
+                reasoning_effort=args.reasoning_effort,
+                service_tier=args.service_tier,
+            )
 
             if not resolved:
                 log_warning(f"Could not resolve conflict {i} in {filepath}")

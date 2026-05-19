@@ -12,6 +12,7 @@ import sys
 from typing import Optional
 
 from ab_cli.core.config import get_language
+from ab_cli.core.llm_settings import add_llm_request_arguments
 from ab_cli.utils import (
     call_llm,
     log_info,
@@ -43,7 +44,13 @@ def extract_ticket_number(description: str) -> Optional[str]:
     return None
 
 
-def generate_branch_name(description: str, lang: str, prefix: Optional[str] = None) -> str:
+def generate_branch_name(
+    description: str,
+    lang: str,
+    prefix: Optional[str] = None,
+    reasoning_effort: str = None,
+    service_tier: str = None,
+) -> str:
     """Generate branch name using LLM."""
     # Extract ticket number if present
     ticket = extract_ticket_number(description)
@@ -79,7 +86,12 @@ Example outputs:
 Return ONLY the branch name:"""
 
     try:
-        result = call_llm(prompt_text, lang=lang)
+        result = call_llm(
+            prompt_text,
+            lang=lang,
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
+        )
 
         if not result:
             log_error("API call failed for branch name generation")
@@ -145,6 +157,7 @@ Examples:
         action='store_true',
         help='Skip confirmation when creating branch'
     )
+    add_llm_request_arguments(parser)
 
     args = parser.parse_args()
 
@@ -164,7 +177,13 @@ Examples:
     try:
         log_info("Generating branch name...")
 
-        branch_name = generate_branch_name(args.description, lang, args.prefix)
+        branch_name = generate_branch_name(
+            args.description,
+            lang,
+            args.prefix,
+            reasoning_effort=args.reasoning_effort,
+            service_tier=args.service_tier,
+        )
 
         if not branch_name:
             log_error("Failed to generate branch name")
