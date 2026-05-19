@@ -432,8 +432,14 @@ class TestMain:
         with patch("ab_cli.commands.auto_commit.push_branch", return_value=True) as mock_push:
             with patch("ab_cli.commands.auto_commit.check_gh_installed", return_value=True):
                 with patch("ab_cli.commands.auto_commit.check_gh_authenticated", return_value=True):
-                    with patch("ab_cli.commands.auto_commit.generate_pr_content", return_value=("PR title", "PR body")) as mock_pr_content:
-                        with patch("ab_cli.commands.auto_commit.create_pr", return_value="https://example.com/pr/1") as mock_create_pr:
+                    with patch(
+                        "ab_cli.commands.auto_commit.generate_pr_content",
+                        return_value=("PR title", "PR body"),
+                    ) as mock_pr_content:
+                        with patch(
+                            "ab_cli.commands.auto_commit.create_pr",
+                            return_value="https://example.com/pr/1",
+                        ) as mock_create_pr:
                             with patch("ab_cli.commands.auto_commit.call_llm_with_model_info") as mock_call:
                                 with patch("ab_cli.commands.auto_commit.is_protected_branch", return_value=False):
                                     mock_call.return_value = (
@@ -462,11 +468,18 @@ class TestMain:
                 with patch("ab_cli.commands.auto_commit.check_gh_installed", return_value=True):
                     with patch("ab_cli.commands.auto_commit.check_gh_authenticated", return_value=True):
                         with patch("ab_cli.commands.auto_commit.detect_base_branch", return_value="master"):
-                            with patch("ab_cli.commands.auto_commit.generate_pr_content", return_value=("PR title", "PR body")):
-                                with patch("ab_cli.commands.auto_commit.create_pr", return_value="https://example.com/pr/1") as mock_create_pr:
+                            with patch(
+                                "ab_cli.commands.auto_commit.generate_pr_content",
+                                return_value=("PR title", "PR body"),
+                            ):
+                                with patch(
+                                    "ab_cli.commands.auto_commit.create_pr",
+                                    return_value="https://example.com/pr/1",
+                                ) as mock_create_pr:
                                     with patch("ab_cli.commands.auto_commit.call_llm_with_model_info") as mock_call:
                                         mock_call.return_value = (
-                                            '{"branch_name": "feature/protected-master", "commit_message": "Master PR commit"}',
+                                            '{"branch_name": "feature/protected-master", '
+                                            '"commit_message": "Master PR commit"}',
                                             "test-model",
                                             100,
                                         )
@@ -498,11 +511,18 @@ class TestMain:
                 with patch("ab_cli.commands.auto_commit.check_gh_installed", return_value=True):
                     with patch("ab_cli.commands.auto_commit.check_gh_authenticated", return_value=True):
                         with patch("ab_cli.commands.auto_commit.detect_base_branch", return_value="main"):
-                            with patch("ab_cli.commands.auto_commit.generate_pr_content", return_value=("PR title", "PR body")):
-                                with patch("ab_cli.commands.auto_commit.create_pr", return_value="https://example.com/pr/1") as mock_create_pr:
+                            with patch(
+                                "ab_cli.commands.auto_commit.generate_pr_content",
+                                return_value=("PR title", "PR body"),
+                            ):
+                                with patch(
+                                    "ab_cli.commands.auto_commit.create_pr",
+                                    return_value="https://example.com/pr/1",
+                                ) as mock_create_pr:
                                     with patch("ab_cli.commands.auto_commit.call_llm_with_model_info") as mock_call:
                                         mock_call.return_value = (
-                                            '{"branch_name": "feature/protected-main", "commit_message": "Main PR commit"}',
+                                            '{"branch_name": "feature/protected-main", '
+                                            '"commit_message": "Main PR commit"}',
                                             "test-model",
                                             100,
                                         )
@@ -563,9 +583,18 @@ class TestMain:
         with patch("ab_cli.commands.auto_commit.push_branch", return_value=True) as mock_push:
             with patch("ab_cli.commands.auto_commit.check_gh_installed", return_value=True):
                 with patch("ab_cli.commands.auto_commit.check_gh_authenticated", return_value=True):
-                    with patch("ab_cli.commands.auto_commit.generate_pr_content", return_value=("PR title", "PR body")) as mock_pr_content:
-                        with patch("ab_cli.commands.auto_commit.create_pr", return_value="https://example.com/pr/1") as mock_create_pr:
-                            with patch("ab_cli.commands.auto_commit.call_llm_with_model_info", side_effect=AssertionError("commit plan should not be generated")):
+                    with patch(
+                        "ab_cli.commands.auto_commit.generate_pr_content",
+                        return_value=("PR title", "PR body"),
+                    ) as mock_pr_content:
+                        with patch(
+                            "ab_cli.commands.auto_commit.create_pr",
+                            return_value="https://example.com/pr/1",
+                        ) as mock_create_pr:
+                            with patch(
+                                "ab_cli.commands.auto_commit.call_llm_with_model_info",
+                                side_effect=AssertionError("commit plan should not be generated"),
+                            ):
                                 with patch("ab_cli.commands.auto_commit.is_protected_branch", return_value=False):
                                     main()
 

@@ -1,5 +1,4 @@
 """Unit tests for ab_cli.commands.auto_commit helpers."""
-import json
 
 from ab_cli.commands.auto_commit import (
     extract_json_object,

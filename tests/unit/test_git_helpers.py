@@ -2,9 +2,7 @@
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from ab_cli.utils.git_helpers import get_commit_diff, push_branch, run_git
+from ab_cli.utils.git_helpers import get_commit_diff, push_branch
 
 
 class TestRunGit:
