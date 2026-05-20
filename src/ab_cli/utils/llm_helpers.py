@@ -3,11 +3,11 @@
 Provides simplified interface for LLM API calls with automatic
 model selection based on token count.
 """
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from ab_cli.core.config import get_config, estimate_tokens
 from ab_cli.core.llm_settings import DEFAULT_REASONING_EFFORT, DEFAULT_SERVICE_TIER
-from ab_cli.commands.prompt import send_to_openrouter
+from ab_cli.utils.api import send_to_openrouter
 
 
 def call_llm(
@@ -70,7 +70,7 @@ def call_llm_with_model_info(
     max_completion_tokens: int = -1,
     reasoning_effort: Optional[str] = None,
     service_tier: Optional[str] = None,
-) -> tuple[Optional[dict], str, int]:
+) -> Tuple[Optional[Dict], str, int]:
     """Call LLM and return response with model info.
 
     Same as call_llm but also returns the selected model name

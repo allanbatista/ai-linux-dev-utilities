@@ -58,4 +58,7 @@ def handle_cli_errors(func: F) -> F:
         except KeyboardInterrupt:
             print("\nAborted.")
             sys.exit(130)
+        except Exception as e:
+            log_error(f"Unexpected error: {e}")
+            sys.exit(1)
     return wrapper  # type: ignore

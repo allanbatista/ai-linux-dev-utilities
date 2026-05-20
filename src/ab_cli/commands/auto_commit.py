@@ -18,6 +18,7 @@ from ab_cli.commands.pr_description import (
     create_pr,
     generate_pr_content,
 )
+from ab_cli.utils.error_handling import handle_cli_errors
 from ab_cli.utils import (
     call_llm_with_model_info,
     log_info,
@@ -286,6 +287,7 @@ def handle_pr_flow(current_branch: str, lang: str, push_before_pr: bool) -> None
         sys.exit(1)
 
 
+@handle_cli_errors
 def main():
     parser = argparse.ArgumentParser(
         description='Generate a branch name and commit message using the prompt utility',

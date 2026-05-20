@@ -13,6 +13,7 @@ from typing import Optional
 
 from ab_cli.core.config import get_language
 from ab_cli.core.llm_settings import add_llm_request_arguments
+from ab_cli.utils.error_handling import handle_cli_errors
 from ab_cli.utils import (
     call_llm,
     log_info,
@@ -120,6 +121,7 @@ Return ONLY the branch name:"""
         return ""
 
 
+@handle_cli_errors
 def main():
     parser = argparse.ArgumentParser(
         description='Generate branch names from task descriptions',

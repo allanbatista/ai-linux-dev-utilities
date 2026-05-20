@@ -33,18 +33,33 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pyperclip
 import requests
-
 from binaryornot.check import is_binary
 import pathspec
 
 from ab_cli.core.config import get_config
 from ab_cli.core.llm_settings import add_llm_request_arguments
+from ab_cli.utils.error_handling import handle_cli_errors
+from ab_cli.utils.api import (
+    set_verbose as set_api_verbose,
+    pp,
+)
+
+# Re-export for backward compatibility (tests import these from prompt.py)
+__all__ = [
+    'main',
+    'send_to_openrouter',
+    'build_specialist_prefix',
+    'sanitize_sensitive_data',
+    'save_to_history',
+]
 
 VERBOSE = True
 
-def pp(*args, **kwargs):
-    if VERBOSE:
-        print(*args, **kwargs)
+
+def _sync_verbose():
+    """Sync the VERBOSE flag with the api module."""
+    set_api_verbose(VERBOSE)
+
 
 # =========================
 # Utilities and Persistence
@@ -80,7 +95,6 @@ def persist_default_model(new_model: str) -> bool:
     except Exception as e:
         pp(f"Error persisting default model: {e}")
         return False
-
 
 # =========================
 # Providers
@@ -211,19 +225,31 @@ def sanitize_sensitive_data(text: str) -> str:
     Sanitize sensitive data from text before saving to history.
 
     Patterns sanitized:
-    - API keys (various formats)
+    - API keys (various formats including custom X_API_KEY patterns)
     - Passwords and secrets
-    - Tokens and credentials
+    - Tokens and credentials (OAuth, Bearer, access tokens)
+    - Webhook URLs
+    - Private keys (PEM format)
+    - Generic secret patterns
+
+    Args:
+        text: The text to sanitize
+
+    Returns:
+        Text with sensitive data replaced with [REDACTED] placeholders
     """
     if not text:
         return text
 
     # Patterns to sanitize (key=value format)
     patterns = [
-        # API keys
+        # API keys - specific patterns
         (r'(api[_-]?key\s*[=:]\s*)["\']?[\w-]{20,}["\']?', r'\1[REDACTED]'),
         (r'(OPENROUTER_API_KEY\s*[=:]\s*)["\']?[\w-]+["\']?', r'\1[REDACTED]'),
-        (r'(sk-[a-zA-Z0-9]{20,})', '[REDACTED_API_KEY]'),
+        # OpenAI-style sk- API keys (allow hyphens in key value)
+        (r'(sk-[a-zA-Z0-9-]{20,})', '[REDACTED_API_KEY]'),
+        # Custom API keys (e.g., STRIPE_API_KEY=xxx, GITHUB_API_KEY=xxx)
+        (r'([A-Z_]+_API_KEY\s*[=:]\s*)\S+', r'\1[REDACTED]'),
         # Passwords
         (r'(password\s*[=:]\s*)["\']?[^\s"\']+["\']?', r'\1[REDACTED]', re.IGNORECASE),
         (r'(passwd\s*[=:]\s*)["\']?[^\s"\']+["\']?', r'\1[REDACTED]', re.IGNORECASE),
@@ -232,10 +258,21 @@ def sanitize_sensitive_data(text: str) -> str:
         (r'(secret\s*[=:]\s*)["\']?[\w-]+["\']?', r'\1[REDACTED]', re.IGNORECASE),
         (r'(token\s*[=:]\s*)["\']?[\w-]{20,}["\']?', r'\1[REDACTED]', re.IGNORECASE),
         (r'(auth\s*[=:]\s*)["\']?[\w-]+["\']?', r'\1[REDACTED]', re.IGNORECASE),
-        # Bearer tokens
-        (r'(Bearer\s+)[a-zA-Z0-9._-]{20,}', r'\1[REDACTED]'),
+        # OAuth and access tokens
+        (r'(oauth_token\s*[=:]\s*)\S+', r'\1[REDACTED]', re.IGNORECASE),
+        (r'(access_token\s*[=:]\s*)\S+', r'\1[REDACTED]', re.IGNORECASE),
+        # Bearer tokens (comprehensive pattern including base64 chars)
+        (r'(Bearer\s+)[A-Za-z0-9\-._~+/]+=*', r'\1[REDACTED]'),
         # Basic auth
         (r'(Basic\s+)[a-zA-Z0-9+/=]{20,}', r'\1[REDACTED]'),
+        # Webhook URLs (sanitize entire URL - matches "webhook" or "hooks" in URL)
+        (r'https?://[^\s]*(webhook|hooks)[^\s]*', '[REDACTED_WEBHOOK_URL]', re.IGNORECASE),
+        # Private keys (PEM format)
+        (r'-----BEGIN[A-Z\s]*PRIVATE KEY-----[\s\S]*?-----END[A-Z\s]*PRIVATE KEY-----',
+         '[REDACTED_PRIVATE_KEY]'),
+        # Generic secrets pattern (SECRET, PASSWORD, TOKEN, KEY, CREDENTIAL in env vars)
+        (r'([A-Z_]*(SECRET|PASSWORD|TOKEN|KEY|CREDENTIAL)[A-Z_]*\s*[=:]\s*)\S+',
+         r'\1[REDACTED]'),
     ]
 
     result = text
@@ -661,8 +698,6 @@ def process_file(file_path: pathlib.Path, path_format: str, max_tokens_doc: int)
         error_message = f"// error_processing_file=\"{file_path.resolve()}\"\n// Error: {e}\n"
         return error_message, 0, 0
 
-
-# =========================
 # Effective Configuration
 # =========================
 
@@ -698,6 +733,8 @@ def resolve_settings(args, config: Dict[str, Any]) -> Dict[str, Any]:
 # Main
 # =========================
 
+
+@handle_cli_errors
 def main():
     """Main function that orchestrates script execution."""
     parser = argparse.ArgumentParser(
@@ -807,6 +844,7 @@ def main():
 
     global VERBOSE
     VERBOSE = not args.only_output
+    _sync_verbose()
 
     # Update default model if requested
     if args.set_default_model:
@@ -953,7 +991,7 @@ def main():
 
                     try:
                         text = json.dumps(json.loads(text), indent=4)
-                    except:
+                    except Exception:
                         pass
 
                 print(text, flush=True)

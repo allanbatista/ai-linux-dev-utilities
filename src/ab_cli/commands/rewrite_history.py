@@ -14,6 +14,7 @@ from typing import Optional, Tuple
 
 from ab_cli.core.config import get_config, get_language
 from ab_cli.core.llm_settings import add_llm_request_arguments
+from ab_cli.utils.error_handling import handle_cli_errors
 from ab_cli.utils import (
     call_llm,
     log_info,
@@ -165,6 +166,7 @@ def show_interactive_menu() -> Tuple[str, bool, bool, bool]:
         sys.exit(1)
 
 
+@handle_cli_errors
 def main():
     parser = argparse.ArgumentParser(
         description='Rewrite commit messages using LLM analysis',

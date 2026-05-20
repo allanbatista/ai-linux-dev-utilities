@@ -33,6 +33,7 @@ dependencies = [
     "pyperclip>=1.8.0",
     "binaryornot>=0.4.4",
     "pathspec>=0.11.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
