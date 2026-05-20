@@ -224,6 +224,8 @@ class TestCmdListKeys:
 
         # Should include known keys
         assert any("global.language" in line for line in lines)
+        assert any("global.reasoning_effort" in line for line in lines)
+        assert any("global.service_tier" in line for line in lines)
         assert any("models.default" in line for line in lines)
         assert any("version" in line for line in lines)
 

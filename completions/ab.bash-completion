@@ -14,10 +14,10 @@ _ab_completions() {
     local config_commands="show get set init path edit list-keys help"
 
     # Options by command
-    local auto_commit_opts="-y --yes -a --add -l --lang -h --help"
-    local pr_description_opts="-b --base -c --create -d --draft -l --lang -y --yes -h --help"
-    local rewrite_history_opts="-y --yes -n --dry-run -l --lang --smart --force-all --skip-merges --include-merges --backup-branch -h --help"
-    local prompt_opts="-p --prompt --model --only-output --json --lang -s --specialist -n --max-tokens -m --max-completion-tokens -u --unlimited --set-default-model -h --help"
+    local auto_commit_opts="-f --force -y -a --add -Y --yes -s --staged-only -p --push -P --pr -l --lang --reasoning-effort --service-tier -h --help"
+    local pr_description_opts="-b --base -c --create -d --draft -l --lang --reasoning-effort --service-tier -y --yes -h --help"
+    local rewrite_history_opts="-y --yes -n --dry-run -l --lang --smart --force-all --skip-merges --include-merges --backup-branch --reasoning-effort --service-tier -h --help"
+    local prompt_opts="-p --prompt --model --only-output --json --lang -s --specialist -n --max-tokens -m --max-completion-tokens -u --unlimited --set-default-model --reasoning-effort --service-tier -h --help"
     local passgenerator_opts="--no-letters --no-digits --no-punct --min-letters --min-digits --min-punct --allow-sequences --allow-repeated"
     local config_opts="-h --help"
     local config_init_opts="-f --force -h --help"

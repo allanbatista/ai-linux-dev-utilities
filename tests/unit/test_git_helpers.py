@@ -1,7 +1,8 @@
 """Unit tests for ab_cli.utils.git_helpers module."""
 import subprocess
+from unittest.mock import MagicMock, patch
 
-from ab_cli.utils.git_helpers import get_commit_diff
+from ab_cli.utils.git_helpers import get_commit_diff, push_branch
 
 
 class TestRunGit:
@@ -73,3 +74,28 @@ class TestRunGit:
         assert "Café" in diff
         assert "résumé" in diff
         assert "naïve" in diff
+
+
+class TestPushBranch:
+    """Tests for push_branch function."""
+
+    def test_push_branch_success(self):
+        """push_branch returns True when git push succeeds."""
+        with patch("ab_cli.utils.git_helpers.run_git") as mock_run:
+            mock_run.return_value = MagicMock()
+
+            assert push_branch("feature/test") is True
+            mock_run.assert_called_once_with(
+                "push",
+                "-u",
+                "origin",
+                "feature/test",
+                capture=False,
+            )
+
+    def test_push_branch_failure(self):
+        """push_branch returns False when git push fails."""
+        with patch("ab_cli.utils.git_helpers.run_git") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(1, "git")
+
+            assert push_branch("feature/test") is False

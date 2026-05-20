@@ -12,6 +12,7 @@ import sys
 from typing import List, Optional, Tuple
 
 from ab_cli.core.config import get_language
+from ab_cli.core.llm_settings import add_llm_request_arguments
 from ab_cli.utils.error_handling import handle_cli_errors
 from ab_cli.utils import (
     call_llm_with_model_info,
@@ -335,10 +336,20 @@ def build_context(args, input_text: str, input_type: str) -> str:
     return '\n\n'.join(context_parts)
 
 
-def generate_explanation(prompt_text: str, lang: str) -> str:
+def generate_explanation(
+    prompt_text: str,
+    lang: str,
+    reasoning_effort: str = None,
+    service_tier: str = None,
+) -> str:
     """Generate explanation using LLM."""
     try:
-        result, selected_model, _ = call_llm_with_model_info(prompt_text, lang=lang)
+        result, selected_model, _ = call_llm_with_model_info(
+            prompt_text,
+            lang=lang,
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
+        )
 
         log_info(f"Using model: {selected_model}")
 
@@ -405,6 +416,7 @@ Examples:
         action='store_true',
         help='Provide detailed explanation'
     )
+    add_llm_request_arguments(parser)
 
     args = parser.parse_args()
 
@@ -471,7 +483,12 @@ Respond in language: {lang}
 
     log_info("Generating explanation...")
 
-    explanation = generate_explanation(prompt_text, lang)
+    explanation = generate_explanation(
+        prompt_text,
+        lang,
+        reasoning_effort=args.reasoning_effort,
+        service_tier=args.service_tier,
+    )
 
     if explanation:
         print()

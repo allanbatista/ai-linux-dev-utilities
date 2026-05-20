@@ -142,6 +142,15 @@ def create_commit(message: str) -> None:
     run_git('commit', '-m', message, capture=False)
 
 
+def push_branch(branch_name: str, remote: str = 'origin') -> bool:
+    """Push a branch and set its upstream."""
+    try:
+        run_git('push', '-u', remote, branch_name, capture=False)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
 def get_latest_commit() -> str:
     """Get the latest commit in oneline format."""
     result = run_git('log', '-1', '--oneline')

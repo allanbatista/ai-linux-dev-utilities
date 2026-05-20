@@ -59,7 +59,9 @@ def mock_config(temp_config_dir: Path) -> Dict[str, Any]:
             "language": "en",
             "api_base": "https://openrouter.ai/api/v1",
             "api_key_env": "OPENROUTER_API_KEY",
-            "timeout_seconds": 300
+            "timeout_seconds": 300,
+            "reasoning_effort": "medium",
+            "service_tier": "default"
         },
         "models": {
             "small": "test/model-small",

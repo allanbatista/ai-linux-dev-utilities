@@ -10,6 +10,7 @@ import sys
 from typing import Dict, List
 
 from ab_cli.core.config import get_language
+from ab_cli.core.llm_settings import add_llm_request_arguments
 from ab_cli.utils.error_handling import handle_cli_errors
 from ab_cli.utils import (
     call_llm_with_model_info,
@@ -102,8 +103,15 @@ def categorize_commits(commits: List[Dict]) -> Dict[str, List[Dict]]:
     return categories
 
 
-def generate_changelog(commits: str, range_spec: str, format_type: str,
-                       categorize: bool, lang: str) -> str:
+def generate_changelog(
+    commits: str,
+    range_spec: str,
+    format_type: str,
+    categorize: bool,
+    lang: str,
+    reasoning_effort: str = None,
+    service_tier: str = None,
+) -> str:
     """Generate changelog using LLM."""
     category_instruction = ""
     if categorize:
@@ -143,7 +151,12 @@ RULES:
 Generate the changelog:"""
 
     try:
-        result, selected_model, _ = call_llm_with_model_info(prompt_text, lang=lang)
+        result, selected_model, _ = call_llm_with_model_info(
+            prompt_text,
+            lang=lang,
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
+        )
 
         log_info(f"Using model: {selected_model}")
 
@@ -198,6 +211,7 @@ Examples:
         default=None,
         help='Output language (default: en)'
     )
+    add_llm_request_arguments(parser)
 
     args = parser.parse_args()
 
@@ -237,7 +251,9 @@ Examples:
 
     changelog = generate_changelog(
         commits, range_spec, args.format,
-        args.categories, lang
+        args.categories, lang,
+        reasoning_effort=args.reasoning_effort,
+        service_tier=args.service_tier,
     )
 
     if not changelog:

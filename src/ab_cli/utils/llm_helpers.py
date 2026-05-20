@@ -6,6 +6,7 @@ model selection based on token count.
 from typing import Dict, Optional, Tuple
 
 from ab_cli.core.config import get_config, estimate_tokens
+from ab_cli.core.llm_settings import DEFAULT_REASONING_EFFORT, DEFAULT_SERVICE_TIER
 from ab_cli.utils.api import send_to_openrouter
 
 
@@ -15,6 +16,8 @@ def call_llm(
     lang: str = "en",
     specialist: Optional[str] = None,
     max_completion_tokens: int = -1,
+    reasoning_effort: Optional[str] = None,
+    service_tier: Optional[str] = None,
 ) -> Optional[dict]:
     """Call LLM with automatic model selection based on token count.
 
@@ -41,6 +44,8 @@ def call_llm(
     timeout_s = config.get_with_default('global.timeout_seconds')
     api_key_env = config.get_with_default('global.api_key_env')
     api_base = config.get_with_default('global.api_base')
+    reasoning_effort = reasoning_effort or config.get_with_default('global.reasoning_effort') or DEFAULT_REASONING_EFFORT
+    service_tier = service_tier or config.get_with_default('global.service_tier') or DEFAULT_SERVICE_TIER
 
     return send_to_openrouter(
         prompt=prompt,
@@ -50,6 +55,8 @@ def call_llm(
         model_name=selected_model,
         timeout_s=timeout_s,
         max_completion_tokens=max_completion_tokens,
+        reasoning_effort=reasoning_effort,
+        service_tier=service_tier,
         api_key_env=api_key_env,
         api_base=api_base
     )
@@ -61,6 +68,8 @@ def call_llm_with_model_info(
     lang: str = "en",
     specialist: Optional[str] = None,
     max_completion_tokens: int = -1,
+    reasoning_effort: Optional[str] = None,
+    service_tier: Optional[str] = None,
 ) -> Tuple[Optional[Dict], str, int]:
     """Call LLM and return response with model info.
 
@@ -87,6 +96,8 @@ def call_llm_with_model_info(
     timeout_s = config.get_with_default('global.timeout_seconds')
     api_key_env = config.get_with_default('global.api_key_env')
     api_base = config.get_with_default('global.api_base')
+    reasoning_effort = reasoning_effort or config.get_with_default('global.reasoning_effort') or DEFAULT_REASONING_EFFORT
+    service_tier = service_tier or config.get_with_default('global.service_tier') or DEFAULT_SERVICE_TIER
 
     result = send_to_openrouter(
         prompt=prompt,
@@ -96,6 +107,8 @@ def call_llm_with_model_info(
         model_name=selected_model,
         timeout_s=timeout_s,
         max_completion_tokens=max_completion_tokens,
+        reasoning_effort=reasoning_effort,
+        service_tier=service_tier,
         api_key_env=api_key_env,
         api_base=api_base
     )
@@ -108,6 +121,8 @@ def get_llm_text(
     context: str = "",
     lang: str = "en",
     specialist: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
+    service_tier: Optional[str] = None,
 ) -> Optional[str]:
     """Call LLM and return just the text response.
 
@@ -122,7 +137,14 @@ def get_llm_text(
     Returns:
         The text response string, or None on failure
     """
-    result = call_llm(prompt, context, lang, specialist)
+    result = call_llm(
+        prompt,
+        context,
+        lang,
+        specialist,
+        reasoning_effort=reasoning_effort,
+        service_tier=service_tier,
+    )
 
     if result:
         return result.get('text', '').strip()

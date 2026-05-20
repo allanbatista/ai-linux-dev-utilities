@@ -38,6 +38,8 @@ def build_specialist_prefix(specialist: Optional[str]) -> str:
 
 def send_to_openrouter(prompt: str, context: str, lang: str, specialist: Optional[str],
                        model_name: str, timeout_s: int, max_completion_tokens: int = 256,
+                       reasoning_effort: Optional[str] = None,
+                       service_tier: Optional[str] = None,
                        api_key_env: str = "OPENROUTER_API_KEY",
                        api_base: str = "https://openrouter.ai/api/v1") -> Optional[Dict[str, Any]]:
     """
@@ -96,6 +98,12 @@ def send_to_openrouter(prompt: str, context: str, lang: str, specialist: Optiona
 
     if max_completion_tokens > 0:
         payload["max_tokens"] = max_completion_tokens
+
+    if reasoning_effort:
+        payload["reasoning"] = {"effort": reasoning_effort}
+
+    if service_tier and service_tier != "default":
+        payload["service_tier"] = service_tier
 
     try:
         pp(f"Sending request to OpenRouter ({model_name})...")

@@ -323,7 +323,7 @@ The tool searches for `.aiignore` files from the current directory up to the git
 
 ### ab git auto-commit
 
-Generate commit messages automatically by analyzing staged changes.
+Generate a branch name and commit message automatically from git changes.
 
 **Protected branch detection**: When on `master` or `main`, auto-commit will suggest creating a feature branch before committing.
 
@@ -333,16 +333,32 @@ ab git auto-commit [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `-a` | Stage all files (`git add -A`) before committing |
-| `-y` | Skip confirmation prompt |
+| `-f` | Stay on the current branch on protected branches |
+| `-y`, `-a` | Stage all files (`git add -A`) before committing |
+| `-Y` | Skip final commit confirmation |
+| `-s` | Use only files already staged |
+| `-p` | Push the current branch after committing |
+| `-P` | Create a PR with `gh` after pushing (requires `-p`) |
 | `-l LANG` | Output language (default: `en`) |
 
 ```bash
 # Generate and confirm commit message
 ab git auto-commit
 
-# Stage all and commit without confirmation
-ab git auto-commit -a -y
+# Stage all and skip final confirmation
+ab git auto-commit -y -Y
+
+# Use only staged files
+ab git auto-commit -s -Y
+
+# Stay on the current branch
+ab git auto-commit -f
+
+# Push after committing and open a PR from the branch
+ab git auto-commit -y -Y -p -P
+
+# Create a PR from an already committed branch
+ab git auto-commit -P
 ```
 
 ---
