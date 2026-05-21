@@ -114,9 +114,56 @@ def get_staged_diff() -> str:
     return result.stdout
 
 
+def get_staged_text_files() -> List[str]:
+    """Get staged text file paths, excluding binary files."""
+    result = run_git('diff', '--cached', '--numstat', '-z')
+    items = result.stdout.split('\0')
+    files: List[str] = []
+    i = 0
+
+    while i < len(items):
+        item = items[i]
+        if not item:
+            i += 1
+            continue
+
+        parts = item.split('\t')
+        if len(parts) < 3:
+            i += 1
+            continue
+
+        additions, deletions, path = parts[0], parts[1], parts[2]
+        if path == '' and i + 2 < len(items):
+            path = items[i + 2]
+            i += 3
+        else:
+            i += 1
+
+        if additions != '-' and deletions != '-' and path:
+            files.append(path)
+
+    return files
+
+
+def get_staged_diff_for_files(files: List[str]) -> str:
+    """Get staged diff content for specific files."""
+    if not files:
+        return ""
+    result = run_git('diff', '--cached', '--', *files)
+    return result.stdout
+
+
 def get_staged_name_status() -> str:
     """Get staged files with status (A, M, D, etc.)."""
     result = run_git('diff', '--cached', '--name-status')
+    return result.stdout.strip()
+
+
+def get_staged_name_status_for_files(files: List[str]) -> str:
+    """Get staged files with status for specific files."""
+    if not files:
+        return ""
+    result = run_git('diff', '--cached', '--name-status', '--', *files)
     return result.stdout.strip()
 
 

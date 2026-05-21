@@ -2,7 +2,13 @@
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from ab_cli.utils.git_helpers import get_commit_diff, push_branch
+from ab_cli.utils.git_helpers import (
+    get_commit_diff,
+    get_staged_diff_for_files,
+    get_staged_name_status_for_files,
+    get_staged_text_files,
+    push_branch,
+)
 
 
 class TestRunGit:
@@ -74,6 +80,45 @@ class TestRunGit:
         assert "Café" in diff
         assert "résumé" in diff
         assert "naïve" in diff
+
+
+class TestStagedTextFiles:
+    """Tests for staged text file filtering."""
+
+    def test_get_staged_text_files_excludes_binary(self, mock_git_repo, monkeypatch):
+        """get_staged_text_files excludes binary staged files."""
+        monkeypatch.chdir(mock_git_repo)
+
+        (mock_git_repo / "text.txt").write_text("text content\n")
+        (mock_git_repo / "asset.bin").write_bytes(b"\x00PNG-binary-secret\xff")
+        subprocess.run(["git", "add", "text.txt", "asset.bin"], cwd=mock_git_repo, check=True)
+
+        assert get_staged_text_files() == ["text.txt"]
+
+    def test_get_staged_text_files_only_binary_empty(self, mock_git_repo, monkeypatch):
+        """get_staged_text_files returns empty when only binaries are staged."""
+        monkeypatch.chdir(mock_git_repo)
+
+        (mock_git_repo / "asset.bin").write_bytes(b"\x00PNG-binary-secret\xff")
+        subprocess.run(["git", "add", "asset.bin"], cwd=mock_git_repo, check=True)
+
+        assert get_staged_text_files() == []
+
+    def test_get_staged_diff_and_status_for_files_limit_pathspec(self, mock_git_repo, monkeypatch):
+        """Diff and status helpers only include provided files."""
+        monkeypatch.chdir(mock_git_repo)
+
+        (mock_git_repo / "text.txt").write_text("text content\n")
+        (mock_git_repo / "other.txt").write_text("other content\n")
+        subprocess.run(["git", "add", "text.txt", "other.txt"], cwd=mock_git_repo, check=True)
+
+        diff = get_staged_diff_for_files(["text.txt"])
+        status = get_staged_name_status_for_files(["text.txt"])
+
+        assert "text content" in diff
+        assert "other content" not in diff
+        assert "text.txt" in status
+        assert "other.txt" not in status
 
 
 class TestPushBranch:

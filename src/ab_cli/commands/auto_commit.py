@@ -44,7 +44,10 @@ from ab_cli.utils import (
     get_unstaged_files,
     get_untracked_files,
     get_staged_diff,
+    get_staged_text_files,
+    get_staged_diff_for_files,
     get_staged_name_status,
+    get_staged_name_status_for_files,
     stage_all_files,
     create_commit,
     get_latest_commit,
@@ -391,14 +394,15 @@ Examples:
                 sys.exit(0)
 
     log_info("Generating diff for analysis...")
-    diff = get_staged_diff()
+    text_files = get_staged_text_files()
+    diff = get_staged_diff_for_files(text_files)
 
     if not diff:
-        log_warning("No staged changes to commit")
+        log_warning("No staged text changes to generate commit message")
         sys.exit(0)
 
     recent_commits = get_recent_commits(5)
-    name_status = get_staged_name_status()
+    name_status = get_staged_name_status_for_files(text_files)
     llm_options = {
         "reasoning_effort": args.reasoning_effort,
         "service_tier": args.service_tier,

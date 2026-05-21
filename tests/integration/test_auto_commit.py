@@ -395,6 +395,125 @@ class TestMain:
         assert "untracked.txt" not in prompt_text
         assert "Staged only commit" in get_latest_commit()
 
+    def test_main_excludes_staged_binary_from_prompt_but_commits_it(self, mock_git_repo, monkeypatch):
+        """Mixed staged text/binary sends only text context and commits both."""
+        monkeypatch.chdir(mock_git_repo)
+
+        (mock_git_repo / "text.txt").write_text("text content\n")
+        (mock_git_repo / "asset.bin").write_bytes(b"\x00PNG-binary-secret\xff")
+        subprocess.run(["git", "add", "text.txt", "asset.bin"], cwd=mock_git_repo, check=True)
+
+        monkeypatch.setattr(sys, "argv", ["auto-commit", "-f", "-Y"])
+
+        with patch("ab_cli.commands.auto_commit.call_llm_with_model_info") as mock_call:
+            with patch("ab_cli.commands.auto_commit.is_protected_branch", return_value=True):
+                mock_call.return_value = (
+                    '{"branch_name": "feature/text-only", "commit_message": "Add text and asset"}',
+                    "test-model",
+                    100,
+                )
+
+                main()
+
+        prompt_text = mock_call.call_args.args[0]
+        assert "text.txt" in prompt_text
+        assert "+text content" in prompt_text
+        assert "asset.bin" not in prompt_text
+        assert "A\tasset.bin" not in prompt_text
+        assert "binary-secret" not in prompt_text
+
+        committed_files = subprocess.run(
+            ["git", "show", "--name-only", "--format=", "HEAD"],
+            cwd=mock_git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "text.txt" in committed_files
+        assert "asset.bin" in committed_files
+
+    def test_main_add_excludes_binary_from_prompt_but_stages_it(self, mock_git_repo, monkeypatch):
+        """'-y -Y' stages binaries but keeps them out of LLM context."""
+        monkeypatch.chdir(mock_git_repo)
+
+        (mock_git_repo / "text.txt").write_text("text content\n")
+        (mock_git_repo / "asset.bin").write_bytes(b"\x00PNG-binary-secret\xff")
+
+        monkeypatch.setattr(sys, "argv", ["auto-commit", "-f", "-y", "-Y"])
+
+        with patch("ab_cli.commands.auto_commit.call_llm_with_model_info") as mock_call:
+            with patch("ab_cli.commands.auto_commit.is_protected_branch", return_value=True):
+                mock_call.return_value = (
+                    '{"branch_name": "feature/text-only", "commit_message": "Add staged files"}',
+                    "test-model",
+                    100,
+                )
+
+                main()
+
+        prompt_text = mock_call.call_args.args[0]
+        assert "text.txt" in prompt_text
+        assert "asset.bin" not in prompt_text
+        assert "binary-secret" not in prompt_text
+        assert "asset.bin" in subprocess.run(
+            ["git", "show", "--name-only", "--format=", "HEAD"],
+            cwd=mock_git_repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    def test_main_staged_only_excludes_staged_binary(self, mock_git_repo, monkeypatch):
+        """'-s' excludes staged binaries and ignores unstaged/untracked files."""
+        monkeypatch.chdir(mock_git_repo)
+
+        (mock_git_repo / "staged.txt").write_text("staged content\n")
+        (mock_git_repo / "asset.bin").write_bytes(b"\x00PNG-binary-secret\xff")
+        subprocess.run(["git", "add", "staged.txt", "asset.bin"], cwd=mock_git_repo, check=True)
+        (mock_git_repo / "unstaged.txt").write_text("unstaged content\n")
+        (mock_git_repo / "untracked.txt").write_text("untracked content\n")
+
+        monkeypatch.setattr(sys, "argv", ["auto-commit", "-f", "-s", "-Y"])
+
+        with patch("ab_cli.commands.auto_commit.call_llm_with_model_info") as mock_call:
+            with patch("ab_cli.commands.auto_commit.is_protected_branch", return_value=True):
+                mock_call.return_value = (
+                    '{"branch_name": "feature/staged-only", "commit_message": "Commit staged files"}',
+                    "test-model",
+                    100,
+                )
+
+                main()
+
+        prompt_text = mock_call.call_args.args[0]
+        assert "staged.txt" in prompt_text
+        assert "asset.bin" not in prompt_text
+        assert "binary-secret" not in prompt_text
+        assert "unstaged.txt" not in prompt_text
+        assert "untracked.txt" not in prompt_text
+
+    def test_main_only_binary_staged_skips_llm_and_commit(self, mock_git_repo, monkeypatch, capsys):
+        """Only binary staged changes do not call LLM or commit."""
+        monkeypatch.chdir(mock_git_repo)
+
+        (mock_git_repo / "asset.bin").write_bytes(b"\x00PNG-binary-secret\xff")
+        subprocess.run(["git", "add", "asset.bin"], cwd=mock_git_repo, check=True)
+
+        monkeypatch.setattr(sys, "argv", ["auto-commit", "-Y"])
+
+        with patch(
+            "ab_cli.commands.auto_commit.call_llm_with_model_info",
+            side_effect=AssertionError("LLM should not be called"),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "No staged text changes to generate commit message" in captured.out
+        assert "Initial commit" in get_latest_commit()
+        assert "asset.bin" in get_staged_files()
+
     def test_main_push_flag_pushes_current_branch(self, mock_git_repo, monkeypatch):
         """'-p' pushes the current branch after committing."""
         monkeypatch.chdir(mock_git_repo)
