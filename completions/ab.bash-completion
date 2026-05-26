@@ -6,7 +6,7 @@ _ab_completions() {
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Categories and level 1 commands
-    local level1="git util prompt config help"
+    local level1="git util prompt config upgrade help"
 
     # Commands by category
     local git_commands="auto-commit pr-description rewrite-history help"
@@ -18,6 +18,7 @@ _ab_completions() {
     local pr_description_opts="-b --base -c --create -d --draft -l --lang --reasoning-effort --service-tier -y --yes -h --help"
     local rewrite_history_opts="-y --yes -n --dry-run -l --lang --smart --force-all --skip-merges --include-merges --backup-branch --reasoning-effort --service-tier -h --help"
     local prompt_opts="-p --prompt --model --only-output --json --lang -s --specialist -n --max-tokens -m --max-completion-tokens -u --unlimited --set-default-model --reasoning-effort --service-tier -h --help"
+    local upgrade_opts="--dry-run -h --help"
     local passgenerator_opts="--no-letters --no-digits --no-punct --min-letters --min-digits --min-punct --allow-sequences --allow-repeated"
     local config_opts="-h --help"
     local config_init_opts="-f --force -h --help"
@@ -51,6 +52,12 @@ _ab_completions() {
                     ;;
             esac
         fi
+        return 0
+    fi
+
+    # Root command: upgrade
+    if [ "$category" = "upgrade" ]; then
+        COMPREPLY=($(compgen -W "$upgrade_opts" -- "$cur"))
         return 0
     fi
 

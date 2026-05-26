@@ -120,6 +120,7 @@ ab util <command>       # General utilities
 ab prompt               # Send context to LLM (OpenRouter)
 ab config               # Manage configuration
 ab models               # List available LLM models
+ab upgrade              # Update the installed ab checkout
 ab help                 # Show help
 ```
 
@@ -635,6 +636,20 @@ ab util passgenerator 20 --min-digits 4
 # No punctuation
 ab util passgenerator 12 --no-punct
 ```
+
+### ab upgrade
+
+Update the installed `ab` checkout non-interactively.
+
+```bash
+ab upgrade
+ab upgrade --dry-run
+```
+
+Normal mode requires a clean worktree, runs a fast-forward git update,
+refreshes the virtualenv dependencies, and verifies the `ab` symlink and bash
+completion. `--dry-run` prints the commands/actions without changing state.
+Failures stop the upgrade and return a non-zero exit code.
 
 ---
 
