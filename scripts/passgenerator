@@ -12,10 +12,14 @@ usage() {
     echo "  --min-punct M       Minimum number of punctuation marks"
     echo "  --allow-sequences   Allow sequences (abc, 123, etc.)"
     echo "  --allow-repeated    Allow same character repetition (ex: aaa, 111)"
-    exit 1
+    exit "${1:-1}"
 }
 
 # --- Default parameters ---
+case "${1:-}" in
+    -h|--help) usage 0 ;;
+esac
+
 LENGTH="$1"
 shift || true
 

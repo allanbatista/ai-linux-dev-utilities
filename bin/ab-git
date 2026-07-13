@@ -30,12 +30,12 @@ COMMAND="$1"
 shift
 
 # Python path setup
-VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
+PYTHON_BIN="${AB_PYTHON:-$PROJECT_DIR/.venv/bin/python}"
 export PYTHONPATH="$PROJECT_DIR/src"
 
 run_python() {
-    if [[ -x "$VENV_PYTHON" ]]; then
-        exec "$VENV_PYTHON" -m "$@"
+    if [[ -x "$PYTHON_BIN" ]]; then
+        exec "$PYTHON_BIN" -m "$@"
     else
         exec /usr/bin/python3 -m "$@"
     fi

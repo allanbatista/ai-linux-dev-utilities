@@ -6,11 +6,12 @@ _ab_completions() {
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Categories and level 1 commands
-    local level1="git util prompt config help"
+    local level1="git util media prompt config models upgrade help"
 
     # Commands by category
     local git_commands="auto-commit pr-description rewrite-history help"
     local util_commands="passgenerator help"
+    local media_commands="extract-audio transcribe help"
     local config_commands="show get set init path edit list-keys help"
 
     # Options by command
@@ -18,7 +19,10 @@ _ab_completions() {
     local pr_description_opts="-b --base -c --create -d --draft -l --lang --reasoning-effort --service-tier -y --yes -h --help"
     local rewrite_history_opts="-y --yes -n --dry-run -l --lang --smart --force-all --skip-merges --include-merges --backup-branch --reasoning-effort --service-tier -h --help"
     local prompt_opts="-p --prompt --model --only-output --json --lang -s --specialist -n --max-tokens -m --max-completion-tokens -u --unlimited --set-default-model --reasoning-effort --service-tier -h --help"
+    local upgrade_opts="--dry-run -h --help"
     local passgenerator_opts="--no-letters --no-digits --no-punct --min-letters --min-digits --min-punct --allow-sequences --allow-repeated"
+    local media_extract_opts="-o --output --format -y --yes -h --help"
+    local media_transcribe_opts="-o --output --model --language --chunk-seconds --temperature -h --help"
     local config_opts="-h --help"
     local config_init_opts="-f --force -h --help"
 
@@ -54,6 +58,12 @@ _ab_completions() {
         return 0
     fi
 
+    # Root command: upgrade
+    if [ "$category" = "upgrade" ]; then
+        COMPREPLY=($(compgen -W "$upgrade_opts" -- "$cur"))
+        return 0
+    fi
+
     # Level 2: commands within category
     if [ "$COMP_CWORD" -eq 2 ]; then
         case "$category" in
@@ -62,6 +72,9 @@ _ab_completions() {
                 ;;
             util)
                 COMPREPLY=($(compgen -W "$util_commands" -- "$cur"))
+                ;;
+            media)
+                COMPREPLY=($(compgen -W "$media_commands" -- "$cur"))
                 ;;
         esac
         return 0
@@ -88,6 +101,16 @@ _ab_completions() {
             case "$command" in
                 passgenerator)
                     COMPREPLY=($(compgen -W "$passgenerator_opts" -- "$cur"))
+                    ;;
+            esac
+            ;;
+        media)
+            case "$command" in
+                extract-audio)
+                    COMPREPLY=($(compgen -W "$media_extract_opts" -- "$cur"))
+                    ;;
+                transcribe)
+                    COMPREPLY=($(compgen -W "$media_transcribe_opts" -- "$cur"))
                     ;;
             esac
             ;;

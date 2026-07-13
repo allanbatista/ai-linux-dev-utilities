@@ -26,26 +26,26 @@ fi
 COMMAND="$1"
 shift
 
+PYTHON_BIN="${AB_PYTHON:-$PROJECT_DIR/.venv/bin/python}"
+
 case "$COMMAND" in
     help|-h|--help)
         show_help
         ;;
     explain)
         # Python path setup
-        VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
         export PYTHONPATH="$PROJECT_DIR/src"
-        if [[ -x "$VENV_PYTHON" ]]; then
-            exec "$VENV_PYTHON" -m ab_cli.commands.explain "$@"
+        if [[ -x "$PYTHON_BIN" ]]; then
+            exec "$PYTHON_BIN" -m ab_cli.commands.explain "$@"
         else
             exec /usr/bin/python3 -m ab_cli.commands.explain "$@"
         fi
         ;;
     gen-script|script)
         # Python path setup
-        VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
         export PYTHONPATH="$PROJECT_DIR/src"
-        if [[ -x "$VENV_PYTHON" ]]; then
-            exec "$VENV_PYTHON" -m ab_cli.commands.gen_script "$@"
+        if [[ -x "$PYTHON_BIN" ]]; then
+            exec "$PYTHON_BIN" -m ab_cli.commands.gen_script "$@"
         else
             exec /usr/bin/python3 -m ab_cli.commands.gen_script "$@"
         fi

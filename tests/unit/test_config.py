@@ -77,6 +77,12 @@ class TestAbConfigGet:
         # No config file exists, should fall back to defaults
         assert config.get_with_default("global.language") == DEFAULT_CONFIG["global"]["language"]
 
+    def test_media_defaults(self, temp_config_dir):
+        """Media command defaults are available."""
+        config = get_config()
+        assert config.get_with_default("commands.media.transcription_model") == "openai/gpt-4o-mini-transcribe"
+        assert config.get_with_default("commands.media.chunk_seconds") == 300
+
 
 class TestAbConfigSet:
     """Tests for AbConfig.set() method."""

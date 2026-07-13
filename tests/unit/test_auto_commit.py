@@ -2,8 +2,27 @@
 
 from ab_cli.commands.auto_commit import (
     extract_json_object,
+    filter_autocommit_ignored_files,
     normalize_branch_name,
 )
+
+
+class TestAutocommitIgnore:
+    """Tests for .autocommit-ignore filtering."""
+
+    def test_filter_autocommit_ignored_files_uses_gitignore_syntax(self, tmp_path):
+        """.autocommit-ignore supports file, directory, and negation patterns."""
+        (tmp_path / ".autocommit-ignore").write_text(
+            "*.log\nbuild/\n!important.log\n",
+            encoding="utf-8",
+        )
+
+        result = filter_autocommit_ignored_files(
+            ["keep.py", "debug.log", "important.log", "build/out.py"],
+            str(tmp_path),
+        )
+
+        assert result == ["keep.py", "important.log"]
 
 
 class TestNormalizeBranchName:

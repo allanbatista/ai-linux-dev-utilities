@@ -5,6 +5,8 @@ Extracted from commands/prompt.py to avoid circular imports.
 """
 import os
 import sys
+import base64
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
@@ -154,6 +156,70 @@ def send_to_openrouter(prompt: str, context: str, lang: str, specialist: Optiona
         return None
     except Exception as e:
         print(f"Unexpected error: {e}", file=sys.stderr)
+        return None
+
+
+def transcribe_audio_openrouter(
+    audio_path: str,
+    audio_format: str,
+    model_name: str,
+    timeout_s: int,
+    language: Optional[str] = None,
+    temperature: Optional[float] = None,
+    api_key_env: str = "OPENROUTER_API_KEY",
+    api_base: str = "https://openrouter.ai/api/v1",
+) -> Optional[Dict[str, Any]]:
+    """Transcribe base64-encoded audio through OpenRouter STT."""
+    api_key = os.getenv(api_key_env)
+    if not api_key:
+        print(f"Error: The environment variable {api_key_env} is not defined.", file=sys.stderr)
+        return None
+
+    try:
+        audio_data = base64.b64encode(Path(audio_path).read_bytes()).decode("ascii")
+    except OSError as e:
+        print(f"Error reading audio file: {e}", file=sys.stderr)
+        return None
+
+    payload: Dict[str, Any] = {
+        "input_audio": {
+            "data": audio_data,
+            "format": audio_format.lstrip(".").lower(),
+        },
+        "model": model_name,
+    }
+    if language:
+        payload["language"] = language
+    if temperature is not None:
+        payload["temperature"] = temperature
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    url = f"{api_base.rstrip('/')}/audio/transcriptions"
+
+    try:
+        pp(f"Sending audio transcription request to OpenRouter ({model_name})...")
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout_s)
+        response.raise_for_status()
+        data = response.json()
+        return {
+            "provider": "openrouter",
+            "model": model_name,
+            "text": data.get("text", ""),
+            "usage": data.get("usage", {}),
+        }
+    except requests.exceptions.RequestException as e:
+        print(f"Network or HTTP error calling OpenRouter transcription: {e}", file=sys.stderr)
+        if getattr(e, "response", None) is not None:
+            try:
+                print(f"Error details: {e.response.text}", file=sys.stderr)
+            except Exception:
+                pass
+        return None
+    except ValueError as e:
+        print(f"Invalid JSON response: {e}", file=sys.stderr)
         return None
 
 

@@ -99,6 +99,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
         "passgenerator": {
             "default_length": 16
+        },
+        "media": {
+            "transcription_model": "openai/gpt-4o-mini-transcribe",
+            "chunk_seconds": 300,
+            "temperature": 0
         }
     },
     "history": {

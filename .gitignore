@@ -2,3 +2,10 @@
 *.pyc
 .project-manager
 .venv
+.features/
+.serena/
+*.egg-info/
+build/
+dist/
+*.snap
+*.flatpak

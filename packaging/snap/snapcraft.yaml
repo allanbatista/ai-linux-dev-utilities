@@ -1,0 +1,35 @@
+name: ab
+base: core24
+version: "1.0.0"
+summary: Allan Batista's Linux development utilities
+description: |
+  Unified CLI utilities for development workflows powered by OpenRouter.
+grade: stable
+confinement: classic
+
+parts:
+  ab:
+    plugin: nil
+    source: ../..
+    build-packages:
+      - python3-venv
+    stage-packages:
+      - python3
+      - python3-venv
+      - git
+      - gh
+      - ffmpeg
+    override-build: |
+      install -d "$CRAFT_PART_INSTALL"
+      cp -a "$CRAFT_PART_SRC/bin" "$CRAFT_PART_INSTALL/"
+      cp -a "$CRAFT_PART_SRC/src" "$CRAFT_PART_INSTALL/"
+      cp -a "$CRAFT_PART_SRC/scripts" "$CRAFT_PART_INSTALL/"
+      python3 -m venv --copies "$CRAFT_PART_INSTALL/venv"
+      "$CRAFT_PART_INSTALL/venv/bin/python" -m pip install --no-cache-dir -r "$CRAFT_PART_SRC/requirements.txt"
+      chmod +x "$CRAFT_PART_INSTALL/bin/"* "$CRAFT_PART_INSTALL/scripts/passgenerator"
+
+apps:
+  ab:
+    command: bin/ab
+    environment:
+      AB_PYTHON: $SNAP/venv/bin/python

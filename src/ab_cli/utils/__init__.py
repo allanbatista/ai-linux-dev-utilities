@@ -63,6 +63,7 @@ from ab_cli.utils.git_helpers import (
 )
 from ab_cli.utils.api import (
     send_to_openrouter,
+    transcribe_audio_openrouter,
     build_specialist_prefix,
     set_verbose as set_api_verbose,
 )
@@ -161,6 +162,7 @@ __all__ = [
     'get_files_changed',
     # API functions
     'send_to_openrouter',
+    'transcribe_audio_openrouter',
     'build_specialist_prefix',
     'set_api_verbose',
     # LLM helpers

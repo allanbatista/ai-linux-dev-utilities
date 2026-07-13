@@ -9,6 +9,9 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
+
+import pathspec
 
 from ab_cli.core.config import get_language
 from ab_cli.core.llm_settings import add_llm_request_arguments
@@ -54,6 +57,21 @@ from ab_cli.utils import (
     get_recent_commits,
     push_branch,
 )
+
+
+AUTOCOMMIT_IGNORE_FILE = ".autocommit-ignore"
+
+
+def filter_autocommit_ignored_files(files: list[str], repo_root: str) -> list[str]:
+    """Filter files ignored only for auto-commit LLM context."""
+    ignore_path = Path(repo_root) / AUTOCOMMIT_IGNORE_FILE
+    if not ignore_path.is_file():
+        return files
+
+    spec = pathspec.GitIgnoreSpec.from_lines(
+        ignore_path.read_text(encoding="utf-8").splitlines()
+    )
+    return [file for file in files if not spec.match_file(file)]
 
 
 def normalize_branch_name(branch_name: str) -> str:
@@ -283,7 +301,7 @@ def handle_pr_flow(current_branch: str, lang: str, push_before_pr: bool) -> None
     try:
         pr_url = create_pr(pr_title, pr_body, base_branch)
         print()
-        log_success("PR created successfully!")
+        log_success("PR is available!")
         log_info(f"URL: {pr_url}")
     except RuntimeError as e:
         log_error(f"Failed to create PR: {e}")
@@ -335,7 +353,8 @@ Examples:
         log_error("Not inside a git repository")
         sys.exit(1)
 
-    os.chdir(get_repo_root())
+    repo_root = get_repo_root()
+    os.chdir(repo_root)
 
     current_branch = get_current_branch()
     on_protected_branch = is_protected_branch(current_branch)
@@ -394,7 +413,7 @@ Examples:
                 sys.exit(0)
 
     log_info("Generating diff for analysis...")
-    text_files = get_staged_text_files()
+    text_files = filter_autocommit_ignored_files(get_staged_text_files(), repo_root)
     diff = get_staged_diff_for_files(text_files)
 
     if not diff:
