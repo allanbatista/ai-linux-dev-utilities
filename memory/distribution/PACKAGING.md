@@ -14,7 +14,7 @@ Gerar artefatos Snap e Flatpak a partir do layout existente de `bin/`, `src/` e 
 
 - Os dispatchers em `bin/` aceitam `AB_PYTHON` para usar o interpretador incluído no pacote.
 - `ab upgrade` delega a atualização ao Snap ou Flatpak quando executado dentro desses ambientes.
-- O workflow anexa os dois artefatos à release da tag validada.
+- O workflow constrói o Snap no runner efêmero com `--destructive-mode`, constrói o Flatpak e anexa os dois artefatos à release da tag validada.
 
 ## Fluxo
 
@@ -28,4 +28,3 @@ Gerar artefatos Snap e Flatpak a partir do layout existente de `bin/`, `src/` e 
 - `packaging/flatpak/io.github.allanbatista.ab.yml`
 - `.github/workflows/release.yml`
 - `bin/ab-upgrade`
-
