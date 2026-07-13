@@ -144,6 +144,18 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+if [ -n "${SNAP:-}" ]; then
+    echo "This installation is managed by Snap."
+    echo "Run: snap refresh ab"
+    exit 0
+fi
+
+if [ -n "${FLATPAK_ID:-}" ]; then
+    echo "This installation is managed by Flatpak."
+    echo "Run: flatpak update io.github.allanbatista.ab"
+    exit 0
+fi
+
 require_tool git
 require_tool python3
 

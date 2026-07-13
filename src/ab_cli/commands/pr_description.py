@@ -88,7 +88,11 @@ def create_pr(title: str, body: str, base_branch: str, draft: bool = False) -> s
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout)
+        error_output = result.stderr or result.stdout or ""
+        existing_pr = re.search(r'https?://[^\s]+/pull/\d+', error_output)
+        if "pull request" in error_output.lower() and "already exists" in error_output.lower() and existing_pr:
+            return existing_pr.group()
+        raise RuntimeError(error_output)
 
     return result.stdout.strip()
 
@@ -306,7 +310,7 @@ Examples:
         try:
             pr_url = create_pr(pr_title, pr_body, base_branch, args.draft)
             print()
-            log_success("PR created successfully!")
+            log_success("PR is available!")
             log_info(f"URL: {pr_url}")
         except RuntimeError as e:
             log_error(f"Failed to create PR: {e}")

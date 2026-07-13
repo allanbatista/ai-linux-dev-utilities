@@ -1,5 +1,4 @@
 """Unit tests for media utilities."""
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

@@ -25,15 +25,16 @@ fi
 COMMAND="$1"
 shift
 
+PYTHON_BIN="${AB_PYTHON:-$PROJECT_DIR/.venv/bin/python}"
+
 case "$COMMAND" in
     help|-h|--help)
         show_help
         ;;
     extract-audio|transcribe)
-        VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
         export PYTHONPATH="$PROJECT_DIR/src"
-        if [[ -x "$VENV_PYTHON" ]]; then
-            exec "$VENV_PYTHON" -m ab_cli.commands.media "$COMMAND" "$@"
+        if [[ -x "$PYTHON_BIN" ]]; then
+            exec "$PYTHON_BIN" -m ab_cli.commands.media "$COMMAND" "$@"
         else
             exec /usr/bin/python3 -m ab_cli.commands.media "$COMMAND" "$@"
         fi

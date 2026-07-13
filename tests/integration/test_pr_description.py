@@ -210,6 +210,20 @@ class TestGhCli:
             with pytest.raises(RuntimeError):
                 create_pr("Title", "Body", "main")
 
+    def test_create_pr_existing_returns_url(self):
+        """Returns the existing PR URL instead of failing."""
+        existing_url = "https://github.com/owner/repo/pull/123"
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1,
+                stderr=(
+                    'a pull request for branch "feature" into branch "main" '
+                    f"already exists:\n{existing_url}"
+                ),
+            )
+
+            assert create_pr("Title", "Body", "main") == existing_url
+
 
 class TestMain:
     """Tests for main() entry point."""

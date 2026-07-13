@@ -112,6 +112,20 @@ def test_upgrade_help_documents_behavior():
     assert "Returns non-zero" in result.stdout
 
 
+def test_upgrade_uses_snap_refresh_when_packaged():
+    result = run_cmd([str(UPGRADE)], env={**os.environ, "SNAP": "/snap/ab/current"})
+
+    assert result.returncode == 0
+    assert "snap refresh ab" in result.stdout
+
+
+def test_upgrade_uses_flatpak_update_when_packaged():
+    result = run_cmd([str(UPGRADE)], env={**os.environ, "FLATPAK_ID": "io.github.allanbatista.ab"})
+
+    assert result.returncode == 0
+    assert "flatpak update io.github.allanbatista.ab" in result.stdout
+
+
 def test_completion_suggests_upgrade_and_options():
     level1_script = (
         f"source {COMPLETION}; "

@@ -1,6 +1,5 @@
 """Integration tests for ab_cli.commands.media."""
 import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

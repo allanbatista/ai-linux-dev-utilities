@@ -301,7 +301,7 @@ def handle_pr_flow(current_branch: str, lang: str, push_before_pr: bool) -> None
     try:
         pr_url = create_pr(pr_title, pr_body, base_branch)
         print()
-        log_success("PR created successfully!")
+        log_success("PR is available!")
         log_info(f"URL: {pr_url}")
     except RuntimeError as e:
         log_error(f"Failed to create PR: {e}")

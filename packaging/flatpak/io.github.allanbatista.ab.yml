@@ -1,0 +1,44 @@
+app-id: io.github.allanbatista.ab
+runtime: org.freedesktop.Sdk
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: ab
+only-arches:
+  - x86_64
+finish-args:
+  - --share=network
+  - --filesystem=home
+  - --env=AB_PYTHON=/app/venv/bin/python
+
+modules:
+  - name: gh
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 "$(find . -type f -name gh -print -quit)" /app/bin/gh
+    sources:
+      - type: archive
+        url: https://github.com/cli/cli/releases/download/v2.96.0/gh_2.96.0_linux_amd64.tar.gz
+        sha256: 83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60
+
+  - name: ffmpeg
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 "$(find . -type f -name ffmpeg -print -quit)" /app/bin/ffmpeg
+      - install -Dm755 "$(find . -type f -name ffprobe -print -quit)" /app/bin/ffprobe
+    sources:
+      - type: archive
+        url: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-12-13-16/ffmpeg-N-125551-ga09be9b91e-linux64-lgpl.tar.xz
+        sha256: 6c206162020fc995d864fa49c6361c18ef2e9904b77cd8b494df54ec9bc2b46a
+
+  - name: ab
+    buildsystem: simple
+    build-commands:
+      - install -d /app/bin
+      - install -Dm755 bin/* /app/bin/
+      - cp -a src /app/
+      - cp -a scripts /app/
+      - python3 -m venv --copies /app/venv
+      - /app/venv/bin/python -m pip install --no-cache-dir -r requirements.txt
+    sources:
+      - type: dir
+        path: ../..
