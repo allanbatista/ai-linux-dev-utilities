@@ -8,6 +8,7 @@ Gerar artefatos Snap e Flatpak a partir do layout existente de `bin/`, `src/` e 
 
 - Snap `ab` em confinamento `classic`.
 - Flatpak `io.github.allanbatista.ab` com runtime Python e ferramentas de Git e mídia.
+- Os módulos `gh` e `ffmpeg` do Flatpak usam arquivos externos verificados por `sha256` no manifesto.
 - Release GitHub disparada por tag `v*`.
 
 ## Relações

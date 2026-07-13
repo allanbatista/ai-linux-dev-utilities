@@ -28,7 +28,7 @@ modules:
     sources:
       - type: archive
         url: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-12-13-16/ffmpeg-N-125551-ga09be9b91e-linux64-lgpl.tar.xz
-        sha256: 6c206162020fc995d864fa49c6361c18ef2e9904b77cd8b494df54ec9bc2b46a
+        sha256: 6c206162020fc995d864fa49c6361c18ef2a9904b77cd8b494df54ec9bc2b46a
 
   - name: ab
     buildsystem: simple
