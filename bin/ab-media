@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname -- "$SCRIPT_PATH")"
+PROJECT_DIR="$(dirname -- "$SCRIPT_DIR")"
+
+show_help() {
+    echo "ab media - Audio and video utilities"
+    echo ""
+    echo "Usage: ab media <command> [arguments...]"
+    echo ""
+    echo "Commands:"
+    echo "  extract-audio     Extract audio from a video"
+    echo "  transcribe        Transcribe audio or video to text"
+    echo ""
+    echo "Use 'ab media <command> --help' for more details"
+}
+
+if [ $# -eq 0 ]; then
+    show_help
+    exit 0
+fi
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+    help|-h|--help)
+        show_help
+        ;;
+    extract-audio|transcribe)
+        VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
+        export PYTHONPATH="$PROJECT_DIR/src"
+        if [[ -x "$VENV_PYTHON" ]]; then
+            exec "$VENV_PYTHON" -m ab_cli.commands.media "$COMMAND" "$@"
+        else
+            exec /usr/bin/python3 -m ab_cli.commands.media "$COMMAND" "$@"
+        fi
+        ;;
+    *)
+        echo "Error: unknown media command '$COMMAND'"
+        echo "Use 'ab media help' to see available commands"
+        exit 1
+        ;;
+esac

@@ -12,6 +12,7 @@ show_help() {
     echo "Categories:"
     echo "  git               Git utilities powered by LLM"
     echo "  util              General utilities"
+    echo "  media             Audio and video utilities"
     echo ""
     echo "Commands:"
     echo "  prompt            Send context to LLM (OpenRouter)"
@@ -43,7 +44,7 @@ case "$COMMAND" in
     help|-h|--help)
         show_help
         ;;
-    git|util)
+    git|util|media)
         exec "$SCRIPT_DIR/ab-$COMMAND" "$@"
         ;;
     prompt|config|models|upgrade)

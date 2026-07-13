@@ -733,3 +733,43 @@ class TestMain:
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "-P requires -p" in captured.err
+
+
+class TestAutocommitIgnoreIntegration:
+    """Tests .autocommit-ignore in auto-commit flow."""
+
+    def test_main_filters_llm_context_without_unstaging_files(self, mock_git_repo, monkeypatch):
+        """.autocommit-ignore removes files from LLM context only."""
+        monkeypatch.chdir(mock_git_repo)
+        (mock_git_repo / ".autocommit-ignore").write_text(
+            "ignored.txt\nbuild/\n",
+            encoding="utf-8",
+        )
+        (mock_git_repo / "keep.txt").write_text("keep content\n")
+        (mock_git_repo / "ignored.txt").write_text("ignored secret\n")
+        (mock_git_repo / "build").mkdir()
+        (mock_git_repo / "build" / "out.txt").write_text("build secret\n")
+        subprocess.run(
+            ["git", "add", "keep.txt", "ignored.txt", "build/out.txt"],
+            cwd=mock_git_repo,
+            check=True,
+        )
+        monkeypatch.setattr(sys, "argv", ["auto-commit", "-f", "-s"])
+
+        with patch("builtins.input", return_value="n"):
+            with patch("ab_cli.commands.auto_commit.call_llm_with_model_info") as mock_llm:
+                mock_llm.return_value = (
+                    '{"branch_name": "feature/keep", "commit_message": "feat: keep"}',
+                    "test-model",
+                    100,
+                )
+
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+
+        assert exc_info.value.code == 0
+        prompt = mock_llm.call_args[0][0]
+        assert "keep content" in prompt
+        assert "ignored secret" not in prompt
+        assert "build secret" not in prompt
+        assert "ignored.txt" in get_staged_files()

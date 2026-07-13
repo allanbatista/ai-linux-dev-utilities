@@ -115,6 +115,7 @@ ab <category|command> [arguments...]
 # Categories:
 ab git <command>        # Git utilities powered by LLM
 ab util <command>       # General utilities
+ab media <command>      # Audio and video utilities
 
 # Root commands:
 ab prompt               # Send context to LLM (OpenRouter)
@@ -142,6 +143,13 @@ ab help                 # Show help
 | `explain` | Explain code, errors, or concepts via LLM |
 | `gen-script` | Generate scripts from natural language |
 | `passgenerator` | Secure password generator |
+
+### Media Commands (`ab media`)
+
+| Command | Description |
+|---------|-------------|
+| `extract-audio` | Extract audio from video |
+| `transcribe` | Transcribe audio or video via OpenRouter STT |
 
 ---
 
@@ -636,6 +644,22 @@ ab util passgenerator 20 --min-digits 4
 # No punctuation
 ab util passgenerator 12 --no-punct
 ```
+
+### ab media
+
+Audio and video utilities. Requires `ffmpeg`, `ffprobe`, and the configured
+OpenRouter API key environment variable.
+
+```bash
+ab media extract-audio video.mp4
+ab media extract-audio video.mp4 -o audio.wav --format wav
+ab media transcribe audio.mp3
+ab media transcribe video.mp4 -o transcript.txt --language pt
+ab media transcribe audio.mp3 --model openai/gpt-4o-mini-transcribe --chunk-seconds 300
+```
+
+`ab media transcribe` uses `commands.media.transcription_model`, defaulting to
+`openai/gpt-4o-mini-transcribe`.
 
 ### ab upgrade
 
