@@ -37,6 +37,9 @@ jobs:
           pytest tests/ -q
           flake8 tests/ --max-line-length=120 --exclude=__pycache__
 
+      - name: Refresh Snap package index
+        run: sudo apt-get update
+
       - name: Build Snap
         id: snapcraft
         uses: snapcore/action-build@v1
