@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ab-cli"
-version = "1.0.0"
+version = "1.0.1"
 description = "AI Linux Dev Utilities - Unified CLI utilities for development workflows, powered by LLMs via OpenRouter"
 readme = "README.md"
 license = {text = "MIT"}

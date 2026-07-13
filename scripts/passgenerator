@@ -87,7 +87,11 @@ contains_repeated() {
 generate_password() {
     local pwd=""
     while true; do
-        pwd=$(< /dev/urandom tr -dc "$CHARSET" | head -c "$LENGTH")
+        pwd=""
+        while [[ ${#pwd} -lt "$LENGTH" ]]; do
+            pwd+=$(head -c "$((LENGTH * 32))" /dev/urandom | tr -dc "$CHARSET")
+        done
+        pwd="${pwd:0:LENGTH}"
 
         # Check minimum quantities
         [[ $(grep -o "[A-Za-z]" <<< "$pwd" | wc -l) -lt "$MIN_LETTERS" ]] && continue
