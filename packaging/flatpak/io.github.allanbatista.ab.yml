@@ -32,6 +32,9 @@ modules:
 
   - name: ab
     buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
     build-commands:
       - install -d /app/bin
       - install -Dm755 bin/* /app/bin/
