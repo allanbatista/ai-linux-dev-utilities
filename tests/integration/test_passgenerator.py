@@ -16,3 +16,16 @@ def test_passgenerator_help_is_available():
 
     assert result.returncode == 0
     assert "--min-digits" in result.stdout
+
+
+def test_passgenerator_generates_password_without_stderr():
+    result = subprocess.run(
+        [str(AB), "util", "passgenerator", "16", "--no-punct"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert len(result.stdout.strip()) == 16
+    assert result.stdout.strip().isalnum()

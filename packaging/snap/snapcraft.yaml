@@ -1,6 +1,6 @@
 name: ab
 base: core24
-version: "1.0.0"
+version: "1.0.1"
 summary: Allan Batista's Linux development utilities
 description: |
   Unified CLI utilities for development workflows powered by OpenRouter.

@@ -12,9 +12,8 @@ Mapear os artefatos Linux do `ab` e sua publicação automatizada.
 
 ```mermaid
 flowchart LR
-  Tag[tag v1.0.0] --> Workflow[release.yml]
+  Tag[tag v*] --> Workflow[release.yml]
   Workflow --> Snap[Snap classic]
   Workflow --> Flatpak[Flatpak bundle]
   Workflow --> Release[GitHub Release]
 ```
-
