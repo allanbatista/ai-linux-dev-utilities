@@ -42,6 +42,7 @@ jobs:
         uses: snapcore/action-build@v1
         with:
           path: packaging/snap
+          snapcraft-args: --destructive-mode
 
       - name: Build Flatpak
         run: |
