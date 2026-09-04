@@ -81,6 +81,7 @@ class TestAbConfigGet:
         """Media command defaults are available."""
         config = get_config()
         assert config.get_with_default("commands.media.transcription_model") == "openai/gpt-4o-mini-transcribe"
+        assert config.get_with_default("commands.media.diarization_model") == "x-ai/grok-stt-1.0"
         assert config.get_with_default("commands.media.chunk_seconds") == 300
 
 

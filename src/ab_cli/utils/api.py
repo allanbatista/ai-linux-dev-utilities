@@ -166,6 +166,7 @@ def transcribe_audio_openrouter(
     timeout_s: int,
     language: Optional[str] = None,
     temperature: Optional[float] = None,
+    diarize: bool = False,
     api_key_env: str = "OPENROUTER_API_KEY",
     api_base: str = "https://openrouter.ai/api/v1",
 ) -> Optional[Dict[str, Any]]:
@@ -192,6 +193,11 @@ def transcribe_audio_openrouter(
         payload["language"] = language
     if temperature is not None:
         payload["temperature"] = temperature
+    if diarize:
+        # Top-level + xAI passthrough: Grok STT uses diarize for speaker labels.
+        payload["diarize"] = True
+        payload["provider"] = {"options": {"x-ai": {"diarize": True}}}
+        payload["response_format"] = "verbose_json"
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -208,6 +214,8 @@ def transcribe_audio_openrouter(
             "provider": "openrouter",
             "model": model_name,
             "text": data.get("text", ""),
+            "words": data.get("words") or [],
+            "segments": data.get("segments") or [],
             "usage": data.get("usage", {}),
         }
     except requests.exceptions.RequestException as e:

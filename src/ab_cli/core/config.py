@@ -102,6 +102,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
         "media": {
             "transcription_model": "openai/gpt-4o-mini-transcribe",
+            "diarization_model": "x-ai/grok-stt-1.0",
             "chunk_seconds": 300,
             "temperature": 0
         }

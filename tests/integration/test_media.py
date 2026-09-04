@@ -127,3 +127,62 @@ class TestMediaMain:
 
         assert exc_info.value.code == 1
         assert "chunk 1" in capsys.readouterr().err
+
+    def test_transcribe_diarize_writes_speaker_labels(
+        self, tmp_path, monkeypatch, mock_config, mock_env, capsys
+    ):
+        input_file = tmp_path / "audio.mp3"
+        input_file.write_bytes(b"audio")
+        output_file = tmp_path / "out.txt"
+        chunk = tmp_path / "chunk.mp3"
+        chunk.write_bytes(b"audio")
+        monkeypatch.setattr(sys, "argv", [
+            "media",
+            "transcribe",
+            str(input_file),
+            "-o",
+            str(output_file),
+            "--diarize",
+        ])
+
+        with patch("ab_cli.commands.media.segment_media", return_value=[chunk]) as mock_segment:
+            with patch("ab_cli.commands.media.transcribe_audio_openrouter") as mock_transcribe:
+                mock_transcribe.return_value = {
+                    "text": "hello world",
+                    "words": [
+                        {"text": "hello", "speaker": 0},
+                        {"text": "world", "speaker": 1},
+                    ],
+                }
+                media.main()
+
+        assert output_file.read_text(encoding="utf-8") == "Speaker 0: hello\nSpeaker 1: world\n"
+        assert mock_transcribe.call_args.kwargs["diarize"] is True
+        assert mock_transcribe.call_args.args[2] == "x-ai/grok-stt-1.0"
+        # diarize default uses larger chunk
+        assert mock_segment.call_args.args[2] == 3600
+
+    def test_transcribe_diarize_without_speakers_exits_1(
+        self, tmp_path, monkeypatch, mock_config, mock_env, capsys
+    ):
+        input_file = tmp_path / "audio.mp3"
+        input_file.write_bytes(b"audio")
+        chunk = tmp_path / "chunk.mp3"
+        chunk.write_bytes(b"audio")
+        monkeypatch.setattr(sys, "argv", [
+            "media",
+            "transcribe",
+            str(input_file),
+            "--diarize",
+        ])
+
+        with patch("ab_cli.commands.media.segment_media", return_value=[chunk]):
+            with patch(
+                "ab_cli.commands.media.transcribe_audio_openrouter",
+                return_value={"text": "only text", "words": []},
+            ):
+                with pytest.raises(SystemExit) as exc_info:
+                    media.main()
+
+        assert exc_info.value.code == 1
+        assert "speaker labels" in capsys.readouterr().err

@@ -178,7 +178,7 @@ class TestGhCli:
             assert check_gh_authenticated() is False
 
     def test_create_pr_success(self):
-        """Creates PR and returns URL."""
+        """Creates draft PR by default and returns URL."""
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
@@ -186,6 +186,7 @@ class TestGhCli:
             )
             result = create_pr("Title", "Body", "main")
             assert result == "https://github.com/owner/repo/pull/123"
+            assert "--draft" in mock_run.call_args[0][0]
 
     def test_create_pr_draft(self):
         """Creates draft PR with --draft flag."""
@@ -199,6 +200,17 @@ class TestGhCli:
             # Verify --draft was passed
             call_args = mock_run.call_args[0][0]
             assert "--draft" in call_args
+
+    def test_create_pr_ready(self):
+        """Creates ready PR without --draft flag."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout="https://github.com/owner/repo/pull/123\n"
+            )
+            create_pr("Title", "Body", "main", draft=False)
+
+            assert "--draft" not in mock_run.call_args[0][0]
 
     def test_create_pr_failure(self):
         """Raises RuntimeError on failure."""
@@ -227,6 +239,16 @@ class TestGhCli:
 
 class TestMain:
     """Tests for main() entry point."""
+
+    def test_main_ready_without_create_exits_1(self, monkeypatch, capsys):
+        """'--ready' requires PR creation."""
+        monkeypatch.setattr(sys, "argv", ["pr-description", "--ready"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 1
+        assert "--ready requires -c" in capsys.readouterr().err
 
     def test_main_not_git_repo_exits_1(self, tmp_path, monkeypatch, capsys):
         """Exits with error when not in git repository."""

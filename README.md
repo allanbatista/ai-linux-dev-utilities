@@ -73,6 +73,7 @@ ab config get models.default
 ab config set global.language pt-br
 ab config set models.default "openai/gpt-5-nano"
 ab config set commands.media.transcription_model "openai/gpt-4o-mini-transcribe"
+ab config set commands.media.diarization_model "x-ai/grok-stt-1.0"
 ab config path
 ab config edit
 ab config list-keys
@@ -164,16 +165,17 @@ ab git changelog v1.0.0..v1.1.0 --categories -o CHANGELOG.md
 
 # Gera ou cria um PR
 ab git pr-description
-ab git pr-description -c -d -b develop -y
+ab git pr-description -c -b develop -y       # Draft por padrão
+ab git pr-description -c --ready -y           # Pronto para revisão
 
 # Prévia segura de resolução ou reescrita
 ab git resolve-conflict --dry-run
 ab git rewrite-history HEAD~5..HEAD --dry-run
 ```
 
-`auto-commit -P` requer `-p`. `pr-description -c` e `auto-commit -P` exigem `gh` autenticado; se já houver PR da branch para a base, exibem a URL existente. `rewrite-history` cria uma branch de backup e deve ser usado com cuidado em commits já publicados.
+`auto-commit -P` requer `-p` e cria PR draft por padrão; use `--ready` para criá-lo pronto para revisão. `pr-description -c` segue o mesmo padrão. Ambos exigem `gh` autenticado; se já houver PR da branch para a base, exibem a URL existente. `rewrite-history` cria uma branch de backup e deve ser usado com cuidado em commits já publicados.
 
-Opções principais: `auto-commit` usa `-f`, `-y/-a`, `-Y`, `-s`, `-p` e `-P`; `branch-name` usa `-c`, `--prefix` e `-y`; `changelog` usa `--format`, `--output` e `--categories`; `pr-description` usa `--base`, `-c`, `-d` e `-y`; `resolve-conflict` usa `-y` e `--dry-run`; `rewrite-history` usa `--smart`, `--force-all`, `--skip-merges`, `--include-merges` e `--backup-branch`.
+Opções principais: `auto-commit` usa `-f`, `-y/-a`, `-Y`, `-s`, `-p`, `-P` e `--ready`; `branch-name` usa `-c`, `--prefix` e `-y`; `changelog` usa `--format`, `--output` e `--categories`; `pr-description` usa `--base`, `-c`, `--ready` e `-y`; `resolve-conflict` usa `-y` e `--dry-run`; `rewrite-history` usa `--smart`, `--force-all`, `--skip-merges`, `--include-merges` e `--backup-branch`.
 
 ### Utilitários
 
@@ -205,13 +207,17 @@ ab util passgenerator 16 --no-punct
 ab media extract-audio video.mp4
 ab media extract-audio video.mp4 -o audio.wav --format wav
 
-# Transcreve áudio ou vídeo pelo OpenRouter
+# Transcreve áudio ou vídeo pelo OpenRouter (plain text)
 ab media transcribe reuniao.mp3 -o reuniao.txt --language pt
 ab media transcribe video.mp4 --chunk-seconds 300 --temperature 0
 ab media transcribe audio.mp3 --model openai/gpt-4o-mini-transcribe
+
+# Com labels de falantes (Speaker 0, Speaker 1, ... — não são nomes reais)
+ab media transcribe reuniao.mp3 --diarize
+ab media transcribe call.wav --diarize --model x-ai/grok-stt-1.0
 ```
 
-`extract-audio` aceita `mp3`, `wav`, `m4a` e `flac`; use `-y` para sobrescrever a saída. A transcrição usa `commands.media.transcription_model` quando `--model` não é informado.
+`extract-audio` aceita `mp3`, `wav`, `m4a` e `flac`; use `-y` para sobrescrever a saída. A transcrição aceita vídeo (`mp4`, `avi`, `webm`, …) ou áudio (`mp3`, `wav`, …) via `ffmpeg`. Modelo padrão: `commands.media.transcription_model`. Com `--diarize`, o default é `commands.media.diarization_model` (`x-ai/grok-stt-1.0` no OpenRouter).
 
 ## Atualização
 

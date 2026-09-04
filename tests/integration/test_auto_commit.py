@@ -571,7 +571,7 @@ class TestMain:
 
         mock_push.assert_called_once_with("feature/pr")
         mock_pr_content.assert_called_once()
-        mock_create_pr.assert_called_once_with("PR title", "PR body", "master")
+        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=True)
         assert "PR commit" in get_latest_commit()
 
     def test_main_pr_flag_creates_branch_from_protected_master(self, mock_git_repo, monkeypatch):
@@ -614,7 +614,7 @@ class TestMain:
         ).stdout.strip()
         assert branch == "feature/protected-master"
         mock_push.assert_called_once_with("feature/protected-master")
-        mock_create_pr.assert_called_once_with("PR title", "PR body", "master")
+        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=True)
         assert "Master PR commit" in get_latest_commit()
 
     def test_main_pr_flag_creates_branch_from_protected_main(self, mock_git_repo, monkeypatch):
@@ -657,7 +657,7 @@ class TestMain:
         ).stdout.strip()
         assert branch == "feature/protected-main"
         mock_push.assert_called_once_with("feature/protected-main")
-        mock_create_pr.assert_called_once_with("PR title", "PR body", "main")
+        mock_create_pr.assert_called_once_with("PR title", "PR body", "main", draft=True)
         assert "Main PR commit" in get_latest_commit()
 
     def test_main_pr_force_on_protected_branch_fails_before_push(self, mock_git_repo, monkeypatch, capsys):
@@ -688,8 +688,8 @@ class TestMain:
         mock_push.assert_not_called()
         mock_create_pr.assert_not_called()
 
-    def test_main_pr_flag_with_clean_tree_uses_pr_flow(self, mock_git_repo, monkeypatch):
-        """'-P' runs PR flow even when there are no working tree edits."""
+    def test_main_ready_pr_with_clean_tree_uses_pr_flow(self, mock_git_repo, monkeypatch):
+        """'--ready' creates a ready PR even when there are no working tree edits."""
         monkeypatch.chdir(mock_git_repo)
 
         subprocess.run(["git", "checkout", "-b", "feature/pr-clean"], cwd=mock_git_repo, check=True)
@@ -697,7 +697,7 @@ class TestMain:
         subprocess.run(["git", "add", "."], cwd=mock_git_repo, check=True)
         subprocess.run(["git", "commit", "-m", "Clean tree commit"], cwd=mock_git_repo, check=True)
 
-        monkeypatch.setattr(sys, "argv", ["auto-commit", "-p", "-P", "-Y"])
+        monkeypatch.setattr(sys, "argv", ["auto-commit", "-p", "-P", "--ready", "-Y"])
 
         with patch("ab_cli.commands.auto_commit.push_branch", return_value=True) as mock_push:
             with patch("ab_cli.commands.auto_commit.check_gh_installed", return_value=True):
@@ -719,7 +719,7 @@ class TestMain:
 
         mock_push.assert_called_once_with("feature/pr-clean")
         mock_pr_content.assert_called_once()
-        mock_create_pr.assert_called_once_with("PR title", "PR body", "master")
+        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=False)
         assert "Clean tree commit" in get_latest_commit()
 
     def test_main_pr_flag_without_push_exits_1(self, mock_git_repo, monkeypatch, capsys):
@@ -733,6 +733,17 @@ class TestMain:
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "-P requires -p" in captured.err
+
+    def test_main_ready_without_pr_exits_1(self, mock_git_repo, monkeypatch, capsys):
+        """'--ready' requires PR creation."""
+        monkeypatch.chdir(mock_git_repo)
+        monkeypatch.setattr(sys, "argv", ["auto-commit", "--ready"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+
+        assert exc_info.value.code == 1
+        assert "--ready requires -P" in capsys.readouterr().err
 
 
 class TestAutocommitIgnoreIntegration:

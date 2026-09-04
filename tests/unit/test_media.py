@@ -69,6 +69,26 @@ class TestMediaHelpers:
         assert "16000" in cmd
 
 
+class TestFormatDiarizedTranscript:
+    def test_groups_consecutive_speakers(self):
+        words = [
+            {"text": "Bom", "speaker": 0},
+            {"text": "dia", "speaker": 0},
+            {"text": "Oi", "speaker": 1},
+            {"text": "tudo", "speaker": 1},
+            {"text": "bem", "speaker": 0},
+        ]
+        result = media.format_diarized_transcript(words)
+        assert result == "Speaker 0: Bom dia\nSpeaker 1: Oi tudo\nSpeaker 0: bem"
+
+    def test_empty_words(self):
+        assert media.format_diarized_transcript([]) == ""
+
+    def test_word_key_fallback(self):
+        words = [{"word": "Hello", "speaker": 2}]
+        assert media.format_diarized_transcript(words) == "Speaker 2: Hello"
+
+
 class TestOpenRouterTranscription:
     def test_transcribe_audio_payload(self, tmp_path, monkeypatch):
         audio = tmp_path / "chunk.mp3"
@@ -100,6 +120,36 @@ class TestOpenRouterTranscription:
         assert payload["model"] == "openai/gpt-4o-mini-transcribe"
         assert payload["language"] == "en"
         assert payload["temperature"] == 0.1
+        assert "diarize" not in payload
+
+    def test_transcribe_audio_diarize_payload(self, tmp_path, monkeypatch):
+        audio = tmp_path / "chunk.mp3"
+        audio.write_bytes(b"abc")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+        response = MagicMock()
+        response.json.return_value = {
+            "text": "hello there",
+            "words": [
+                {"text": "hello", "speaker": 0},
+                {"text": "there", "speaker": 1},
+            ],
+        }
+
+        with patch("requests.post", return_value=response) as mock_post:
+            result = transcribe_audio_openrouter(
+                str(audio),
+                "mp3",
+                "x-ai/grok-stt-1.0",
+                30,
+                diarize=True,
+            )
+
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["diarize"] is True
+        assert payload["provider"]["options"]["x-ai"]["diarize"] is True
+        assert payload["response_format"] == "verbose_json"
+        assert result["words"][0]["speaker"] == 0
 
     def test_transcribe_audio_missing_api_key(self, tmp_path, monkeypatch, capsys):
         audio = tmp_path / "chunk.mp3"

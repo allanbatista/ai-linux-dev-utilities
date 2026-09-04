@@ -80,7 +80,7 @@ def check_gh_authenticated() -> bool:
         return False
 
 
-def create_pr(title: str, body: str, base_branch: str, draft: bool = False) -> str:
+def create_pr(title: str, body: str, base_branch: str, draft: bool = True) -> str:
     """Create PR using gh CLI. Returns PR URL."""
     cmd = ['gh', 'pr', 'create', '--title', title, '--body', body, '--base', base_branch]
     if draft:
@@ -190,8 +190,8 @@ def main():
         epilog='''
 Examples:
   pr-description                    # Generate title and description
-  pr-description -c                 # Generate and create PR
-  pr-description -c -d              # Create PR as draft
+  pr-description -c                 # Generate and create draft PR
+  pr-description -c --ready         # Create PR ready for review
   pr-description -b develop -c -y   # Create PR to develop without confirmation
   pr-description -l pt-br           # Generate in Portuguese
 '''
@@ -201,8 +201,11 @@ Examples:
                         help='Base branch (default: auto-detect main/master)')
     parser.add_argument('-c', '--create', action='store_true',
                         help='Create PR using gh CLI')
-    parser.add_argument('-d', '--draft', action='store_true',
-                        help='Create as draft (requires -c)')
+    pr_state = parser.add_mutually_exclusive_group()
+    pr_state.add_argument('-d', '--draft', action='store_true',
+                          help=argparse.SUPPRESS)
+    pr_state.add_argument('-r', '--ready', action='store_true',
+                          help='Create as ready for review instead of draft (requires -c)')
     parser.add_argument('-l', '--lang', type=str,
                         default=get_language('pr-description'),
                         help=f'Output language (default: {get_language("pr-description")})')
@@ -211,6 +214,10 @@ Examples:
     add_llm_request_arguments(parser)
 
     args = parser.parse_args()
+
+    if args.ready and not args.create:
+        log_error("--ready requires -c")
+        sys.exit(1)
 
     # Check if inside git repo
     if not is_git_repo():
@@ -308,7 +315,7 @@ Examples:
         log_info("Creating PR...")
 
         try:
-            pr_url = create_pr(pr_title, pr_body, base_branch, args.draft)
+            pr_url = create_pr(pr_title, pr_body, base_branch, draft=not args.ready)
             print()
             log_success("PR is available!")
             log_info(f"URL: {pr_url}")
