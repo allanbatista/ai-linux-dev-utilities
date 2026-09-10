@@ -96,6 +96,7 @@ def send_to_openrouter(prompt: str, context: str, lang: str, specialist: Optiona
     payload = {
         "model": model_name,
         "messages": messages,
+        "stream": False,
     }
 
     if max_completion_tokens > 0:
