@@ -242,7 +242,7 @@ def handle_pr_flow(
     push_before_pr: bool,
     ready: bool = False,
 ) -> None:
-    """Generate PR content and create the PR via gh."""
+    """Gera o conteúdo e cria a PR ou atualiza sua descrição via gh."""
     if is_protected_branch(current_branch):
         log_error("-P requires a non-protected branch. Create or checkout a feature branch first.")
         sys.exit(1)
@@ -304,12 +304,14 @@ def handle_pr_flow(
     print()
 
     try:
-        pr_url = create_pr(pr_title, pr_body, base_branch, draft=not ready)
+        pr_url = create_pr(
+            pr_title, pr_body, base_branch, draft=not ready, update_existing=True,
+        )
         print()
         log_success("PR is available!")
         log_info(f"URL: {pr_url}")
     except RuntimeError as e:
-        log_error(f"Failed to create PR: {e}")
+        log_error(f"Failed to create or update PR: {e}")
         sys.exit(1)
 
 
@@ -325,9 +327,9 @@ Examples:
   auto-commit -s -Y              # Use only staged files
   auto-commit -f                 # Stay on current branch even if protected
   auto-commit -y -Y -p           # Stage, commit, and push automatically
-  auto-commit -y -Y -p -P        # Stage, commit, push, and create a draft PR
+  auto-commit -y -Y -p -P        # Stage, commit, push, and create a draft PR or update its description
   auto-commit -y -Y -p -P --ready # Create the PR ready for review
-  auto-commit -P                 # Create a PR from the current branch when it already has commits
+  auto-commit -p -P              # Create a PR or update its description from an already committed branch
   auto-commit -l pt-br           # Generate message in Portuguese
 '''
     )
@@ -343,7 +345,7 @@ Examples:
     parser.add_argument('-p', '--push', action='store_true',
                         help='Push the current branch after committing')
     parser.add_argument('-P', '--pr', action='store_true',
-                        help='Create a PR with gh after pushing (requires -p)')
+                        help='Create a PR or update its description with gh after pushing (requires -p)')
     parser.add_argument('-r', '--ready', action='store_true',
                         help='Create the PR as ready for review instead of draft (requires -P)')
     parser.add_argument('-l', '--lang', type=str,

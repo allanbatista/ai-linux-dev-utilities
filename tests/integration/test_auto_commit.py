@@ -571,7 +571,7 @@ class TestMain:
 
         mock_push.assert_called_once_with("feature/pr")
         mock_pr_content.assert_called_once()
-        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=True)
+        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=True, update_existing=True)
         assert "PR commit" in get_latest_commit()
 
     def test_main_pr_flag_creates_branch_from_protected_master(self, mock_git_repo, monkeypatch):
@@ -614,7 +614,7 @@ class TestMain:
         ).stdout.strip()
         assert branch == "feature/protected-master"
         mock_push.assert_called_once_with("feature/protected-master")
-        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=True)
+        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=True, update_existing=True)
         assert "Master PR commit" in get_latest_commit()
 
     def test_main_pr_flag_creates_branch_from_protected_main(self, mock_git_repo, monkeypatch):
@@ -657,7 +657,7 @@ class TestMain:
         ).stdout.strip()
         assert branch == "feature/protected-main"
         mock_push.assert_called_once_with("feature/protected-main")
-        mock_create_pr.assert_called_once_with("PR title", "PR body", "main", draft=True)
+        mock_create_pr.assert_called_once_with("PR title", "PR body", "main", draft=True, update_existing=True)
         assert "Main PR commit" in get_latest_commit()
 
     def test_main_pr_force_on_protected_branch_fails_before_push(self, mock_git_repo, monkeypatch, capsys):
@@ -719,7 +719,7 @@ class TestMain:
 
         mock_push.assert_called_once_with("feature/pr-clean")
         mock_pr_content.assert_called_once()
-        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=False)
+        mock_create_pr.assert_called_once_with("PR title", "PR body", "master", draft=False, update_existing=True)
         assert "Clean tree commit" in get_latest_commit()
 
     def test_main_pr_flag_without_push_exits_1(self, mock_git_repo, monkeypatch, capsys):
@@ -744,6 +744,75 @@ class TestMain:
 
         assert exc_info.value.code == 1
         assert "--ready requires -P" in capsys.readouterr().err
+
+
+class TestPrDescriptionUpdate:
+    @pytest.mark.parametrize("pending_commit", [True, False])
+    @pytest.mark.parametrize("edit_fails", [True, False])
+    def test_main_updates_existing_pr(
+        self, mock_git_repo, monkeypatch, capsys, pending_commit, edit_fails,
+    ):
+        """Percorre o fluxo real de Git e propaga o resultado da edição da PR."""
+        monkeypatch.chdir(mock_git_repo)
+        subprocess.run(["git", "checkout", "-b", "feature/update-pr"], check=True, capture_output=True)
+        (mock_git_repo / "change.txt").write_text("new content\n")
+        subprocess.run(["git", "add", "change.txt"], check=True)
+        if not pending_commit:
+            subprocess.run(["git", "commit", "-m", "Existing change"], check=True, capture_output=True)
+        monkeypatch.setattr(sys, "argv", ["auto-commit", "-p", "-P", "-Y", "--ready"])
+
+        existing_url = "https://github.com/owner/repo/pull/123"
+        body = "### Descrição\n\nMudanças atuais com `código`.\n"
+        real_run = subprocess.run
+        gh_calls = []
+
+        def run(command, **kwargs):
+            if command[0] != "gh":
+                return real_run(command, **kwargs)
+            gh_calls.append((command, kwargs))
+            if command[1:3] == ["pr", "create"]:
+                return subprocess.CompletedProcess(
+                    command, 1, stdout="",
+                    stderr=f"a pull request already exists:\n{existing_url}",
+                )
+            assert command[1:3] == ["pr", "edit"]
+            return subprocess.CompletedProcess(
+                command, int(edit_fails), stdout="",
+                stderr="permission denied" if edit_fails else "",
+            )
+
+        with patch("ab_cli.commands.auto_commit.push_branch", return_value=True) as push:
+            with patch.multiple(
+                "ab_cli.commands.auto_commit", check_gh_installed=lambda: True,
+                check_gh_authenticated=lambda: True,
+                generate_pr_content=lambda *args: ("Generated title", body),
+            ):
+                with patch("ab_cli.commands.auto_commit.call_llm_with_model_info") as llm:
+                    llm.return_value = (
+                        '{"branch_name": "feature/update-pr", "commit_message": "Update change"}',
+                        "test-model", 100,
+                    )
+                    with patch("subprocess.run", side_effect=run):
+                        if edit_fails:
+                            with pytest.raises(SystemExit) as error:
+                                main()
+                            assert error.value.code == 1
+                        else:
+                            main()
+
+        push.assert_called_once_with("feature/update-pr")
+        assert len(gh_calls) == 2
+        assert gh_calls[1] == (
+            ["gh", "pr", "edit", existing_url, "--body-file", "-"],
+            {"input": body, "capture_output": True, "text": True},
+        )
+        output = capsys.readouterr()
+        if edit_fails:
+            assert "Failed to create or update PR: permission denied" in output.err
+            assert "PR is available!" not in output.out
+        else:
+            assert f"URL: {existing_url}" in output.out
+        assert bool(llm.call_count) == pending_commit
 
 
 class TestAutocommitIgnoreIntegration:

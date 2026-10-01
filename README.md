@@ -150,7 +150,7 @@ ab models info openai/gpt-4o --json
 | `ab git rewrite-history` | Reescreve mensagens de commits com backup |
 
 ```bash
-# Adiciona tudo, confirma sem pergunta, envia e cria PR
+# Adiciona tudo, confirma sem pergunta, envia e cria PR ou atualiza sua descrição
 ab git auto-commit -y -Y -p -P
 
 # Usa somente o que já está no stage
@@ -173,7 +173,7 @@ ab git resolve-conflict --dry-run
 ab git rewrite-history HEAD~5..HEAD --dry-run
 ```
 
-`auto-commit -P` requer `-p` e cria PR draft por padrão; use `--ready` para criá-lo pronto para revisão. `pr-description -c` segue o mesmo padrão. Ambos exigem `gh` autenticado; se já houver PR da branch para a base, exibem a URL existente. `rewrite-history` cria uma branch de backup e deve ser usado com cuidado em commits já publicados.
+`auto-commit -P` requer `-p` e cria PR draft por padrão; use `--ready` para criá-lo pronto para revisão. Se já houver PR da branch para a base, atualiza sua descrição com o conteúdo gerado a partir dos commits e do diff atuais, preservando o título e o estado draft/ready, e exibe sua URL. `pr-description -c` cria PR draft por padrão e, se já existir, apenas exibe a URL. Ambos exigem `gh` autenticado. `rewrite-history` cria uma branch de backup e deve ser usado com cuidado em commits já publicados.
 
 Opções principais: `auto-commit` usa `-f`, `-y/-a`, `-Y`, `-s`, `-p`, `-P` e `--ready`; `branch-name` usa `-c`, `--prefix` e `-y`; `changelog` usa `--format`, `--output` e `--categories`; `pr-description` usa `--base`, `-c`, `--ready` e `-y`; `resolve-conflict` usa `-y` e `--dry-run`; `rewrite-history` usa `--smart`, `--force-all`, `--skip-merges`, `--include-merges` e `--backup-branch`.
 

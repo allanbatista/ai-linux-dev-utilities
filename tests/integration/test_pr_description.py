@@ -235,6 +235,62 @@ class TestGhCli:
             )
 
             assert create_pr("Title", "Body", "main") == existing_url
+            mock_run.assert_called_once()
+
+    @pytest.mark.parametrize("draft", [True, False])
+    @pytest.mark.parametrize("body", ["", "### Descrição\n\nTexto com 'aspas', `código`, $HOME e $(comando).\n"])
+    def test_create_pr_existing_updates_description(self, draft, body):
+        """Atualiza somente a descrição, preservando o conteúdo literal."""
+        existing_url = "https://github.com/owner/repo/pull/123"
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                subprocess.CompletedProcess(
+                    [], 1, stdout="",
+                    stderr=f"a pull request already exists:\n{existing_url}",
+                ),
+                subprocess.CompletedProcess([], 0, stdout=existing_url, stderr=""),
+            ]
+
+            assert create_pr(
+                "New title", body, "main", draft=draft, update_existing=True,
+            ) == existing_url
+            assert mock_run.call_count == 2
+            mock_run.assert_called_with(
+                ['gh', 'pr', 'edit', existing_url, '--body-file', '-'],
+                input=body, capture_output=True, text=True,
+            )
+
+    @pytest.mark.parametrize("stderr, stdout, message", [
+        ("permission denied", "", "permission denied"),
+        ("", "network error", "network error"),
+        ("", "", "Failed to update PR description"),
+    ])
+    def test_create_pr_existing_update_failure(self, stderr, stdout, message):
+        """Propaga a falha de edição, sem retornar sucesso."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = [
+                subprocess.CompletedProcess(
+                    [], 1, stdout="",
+                    stderr="a pull request already exists: https://github.com/owner/repo/pull/123",
+                ),
+                subprocess.CompletedProcess([], 1, stdout=stdout, stderr=stderr),
+            ]
+
+            with pytest.raises(RuntimeError, match=message):
+                create_pr("Title", "Body", "main", update_existing=True)
+
+    @pytest.mark.parametrize("error", [
+        "authentication failed",
+        "a pull request already exists but no URL was returned",
+    ])
+    def test_create_pr_unrelated_error_does_not_edit(self, error):
+        """Não tenta editar quando a criação falha sem identificar a PR."""
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr=error)
+
+            with pytest.raises(RuntimeError, match=error):
+                create_pr("Title", "Body", "main", update_existing=True)
+            mock_run.assert_called_once()
 
 
 class TestMain:

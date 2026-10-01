@@ -80,8 +80,9 @@ def check_gh_authenticated() -> bool:
         return False
 
 
-def create_pr(title: str, body: str, base_branch: str, draft: bool = True) -> str:
-    """Create PR using gh CLI. Returns PR URL."""
+def create_pr(title: str, body: str, base_branch: str, draft: bool = True,
+              update_existing: bool = False) -> str:
+    """Cria a PR e, opcionalmente, atualiza a descrição de uma PR existente."""
     cmd = ['gh', 'pr', 'create', '--title', title, '--body', body, '--base', base_branch]
     if draft:
         cmd.append('--draft')
@@ -91,6 +92,13 @@ def create_pr(title: str, body: str, base_branch: str, draft: bool = True) -> st
         error_output = result.stderr or result.stdout or ""
         existing_pr = re.search(r'https?://[^\s]+/pull/\d+', error_output)
         if "pull request" in error_output.lower() and "already exists" in error_output.lower() and existing_pr:
+            if update_existing:
+                update = subprocess.run(
+                    ['gh', 'pr', 'edit', existing_pr.group(), '--body-file', '-'],
+                    input=body, capture_output=True, text=True,
+                )
+                if update.returncode != 0:
+                    raise RuntimeError(update.stderr or update.stdout or "Failed to update PR description")
             return existing_pr.group()
         raise RuntimeError(error_output)
 
