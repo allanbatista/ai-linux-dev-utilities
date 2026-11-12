@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+
+import argparse
+import functools
+import http.server
+import socket
+import socketserver
+import sys
+from pathlib import Path
+
+
+DEFAULT_PORT = 8080
+MAX_PORT = 65535
+BIND_ADDRESS = "0.0.0.0"
+
+
+class ReusableThreadingTCPServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        prog="httpserver",
+        description="Serve arquivos HTML/estáticos de um diretório.",
+    )
+    parser.add_argument(
+        "directory",
+        nargs="?",
+        default=".",
+        help="Diretório para servir (padrão: diretório atual).",
+    )
+    parser.add_argument(
+        "-p",
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"Porta inicial (padrão: {DEFAULT_PORT}).",
+    )
+    return parser.parse_args()
+
+
+def validate_directory(raw_directory):
+    directory = Path(raw_directory).expanduser()
+    if not directory.exists():
+        print(f"Erro: diretório '{raw_directory}' não existe.", file=sys.stderr)
+        sys.exit(1)
+    if not directory.is_dir():
+        print(f"Erro: '{raw_directory}' não é um diretório.", file=sys.stderr)
+        sys.exit(1)
+    return directory.resolve()
+
+
+def validate_port(port):
+    if port < 1 or port > MAX_PORT:
+        print(f"Erro: porta deve estar entre 1 e {MAX_PORT}.", file=sys.stderr)
+        sys.exit(1)
+    return port
+
+
+def create_server(handler, start_port):
+    last_error = None
+    for port in range(start_port, MAX_PORT + 1):
+        try:
+            return ReusableThreadingTCPServer((BIND_ADDRESS, port), handler), port
+        except OSError as exc:
+            last_error = exc
+            if exc.errno not in (98, 48, 10048) and not _is_address_in_use(exc):
+                break
+
+    print(
+        f"Erro: não encontrei porta disponível a partir de {start_port}.",
+        file=sys.stderr,
+    )
+    if last_error:
+        print(f"Detalhe: {last_error}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _is_address_in_use(exc):
+    return getattr(exc, "errno", None) == getattr(socket, "EADDRINUSE", None)
+
+
+def main():
+    args = parse_args()
+    directory = validate_directory(args.directory)
+    start_port = validate_port(args.port)
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(directory))
+
+    server, port = create_server(handler, start_port)
+    with server:
+        print(f"Servindo: {directory}")
+        print(f"URL local: http://127.0.0.1:{port}/")
+        print(f"URL rede:  http://0.0.0.0:{port}/")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nEncerrado.")
+
+
+if __name__ == "__main__":
+    main()

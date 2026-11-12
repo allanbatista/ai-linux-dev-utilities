@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Uso: rm-node-modules [--dry-run] [diretorio]"
+  echo ""
+  echo "Remove diretórios node_modules recursivamente a partir de um diretório."
+  echo "Se nenhum diretório for informado, usa o diretório atual."
+}
+
+DRY_RUN=0
+TARGET=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run|-n)
+      DRY_RUN=1
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Erro: opção desconhecida '$arg'." >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [ -n "$TARGET" ]; then
+        echo "Erro: informe apenas um diretório." >&2
+        usage >&2
+        exit 2
+      fi
+      TARGET="$arg"
+      ;;
+  esac
+done
+
+TARGET="${TARGET:-.}"
+
+if [ ! -d "$TARGET" ]; then
+  echo "Erro: '$TARGET' não é um diretório." >&2
+  exit 1
+fi
+
+TARGET_ABS=$(cd "$TARGET" && pwd -P)
+
+mapfile -d '' DIRS < <(find "$TARGET_ABS" -type d -name node_modules -prune -print0)
+
+if [ "${#DIRS[@]}" -eq 0 ]; then
+  echo "Nenhum node_modules encontrado em $TARGET_ABS"
+  exit 0
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  printf '%s\n' "${DIRS[@]}"
+  echo "Total: ${#DIRS[@]}"
+  exit 0
+fi
+
+for dir in "${DIRS[@]}"; do
+  rm -rf -- "$dir"
+  echo "Removido: $dir"
+done
+
+echo "Total removido: ${#DIRS[@]}"

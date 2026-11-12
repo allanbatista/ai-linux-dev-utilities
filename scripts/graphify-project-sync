@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf '%s\n' "Usage: graphify-project-sync [--full|--update] [--project PATH] [--no-report]"
+}
+
+mode="update"
+project="$(pwd)"
+report="1"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --full)
+      mode="full"
+      shift
+      ;;
+    --update)
+      mode="update"
+      shift
+      ;;
+    --project)
+      project="$2"
+      shift 2
+      ;;
+    --no-report)
+      report="0"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown argument: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+project="$(cd "$project" && pwd)"
+graphify_bin="$(command -v graphify || true)"
+if [ -z "$graphify_bin" ] && [ -x "$HOME/.local/bin/graphify" ]; then
+  graphify_bin="$HOME/.local/bin/graphify"
+fi
+if [ -z "$graphify_bin" ]; then
+  printf 'graphify not found. Run graphify-project-setup first.\n' >&2
+  exit 1
+fi
+
+link_name=".graphify-out-plain-text-source"
+link_path="$project/$link_name"
+cleanup() {
+  if [ -L "$link_path" ]; then
+    rm -f "$link_path"
+  fi
+}
+trap cleanup EXIT
+
+if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
+  printf 'Refusing to overwrite existing path: %s\n' "$link_path" >&2
+  exit 1
+fi
+
+cleanup
+if [ -d "$project/graphify-out" ]; then
+  (cd "$project" && ln -s graphify-out "$link_name")
+fi
+
+if [ "$mode" = "full" ]; then
+  rm -f "$project/graphify-out/manifest.json"
+fi
+
+exclude_args=(
+  --exclude '*.pdf'
+  --exclude '*.docx'
+  --exclude '*.xlsx'
+  --exclude '*.png'
+  --exclude '*.jpg'
+  --exclude '*.jpeg'
+  --exclude '*.gif'
+  --exclude '*.webp'
+  --exclude '*.svg'
+  --exclude '*.mp4'
+  --exclude '*.mov'
+  --exclude '*.webm'
+  --exclude '*.mkv'
+  --exclude '*.avi'
+  --exclude '*.m4v'
+  --exclude '*.mp3'
+  --exclude '*.wav'
+  --exclude '*.m4a'
+  --exclude '*.ogg'
+  --exclude '*.zip'
+  --exclude '*.tar'
+  --exclude '*.gz'
+  --exclude '*.tgz'
+  --exclude '*.7z'
+  --exclude '*.rar'
+  --exclude '*.sqlite'
+  --exclude '*.sqlite3'
+  --exclude '*.db'
+)
+
+"$graphify_bin" extract "$project" --out "$project" "${exclude_args[@]}"
+
+if [ "$report" = "1" ] && [ -f "$project/graphify-out/graph.json" ]; then
+  "$graphify_bin" cluster-only "$project" --no-viz --no-label
+fi
+
+printf 'Graphify %s sync complete: %s/graphify-out/graph.json\n' "$mode" "$project"

@@ -1,0 +1,78 @@
+#!/bin/bash
+# Limpa branches locais e worktrees.
+# Uso: git-cleanup [--all] [--yes] [diretório]
+#
+#   --all   Remove TODOS os branches locais exceto main/master + branch atual.
+#   --yes   Não pede confirmação.
+
+set -euo pipefail
+
+ALL=0
+YES=0
+TARGET=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --all) ALL=1 ;;
+        --yes) YES=1 ;;
+        -*) echo "Opção desconhecida: $arg" >&2; exit 2 ;;
+        *) TARGET="$arg" ;;
+    esac
+done
+
+TARGET="${TARGET:-$(pwd)}"
+cd "$TARGET"
+echo "→ $(pwd -P)"
+
+# Fetch + prune
+echo "→ git fetch --prune"
+git fetch --prune
+
+CURRENT=$(git branch --show-current)
+MAIN=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}' || echo "main")
+
+if [ "$ALL" -eq 1 ]; then
+    # --all: remove todos exceto main e branch atual
+    BRANCHES=$(git branch --format='%(refname:short)' | grep -v "^${MAIN}$" | grep -v "^${CURRENT}$" || true)
+    if [ -z "$BRANCHES" ]; then
+        echo "Nenhum branch local extra para remover (main=$MAIN, current=$CURRENT)."
+    else
+        echo ""
+        echo "Branches que serão removidos (exceto $MAIN e $CURRENT):"
+        echo "$BRANCHES" | sed 's/^/  - /'
+        echo ""
+        if [ "$YES" -ne 1 ]; then
+            read -r -p "Deletar todos? [y/N] " REPLY
+            case "$REPLY" in
+                [yY]*) ;;
+                *) echo "Cancelado."; exit 1 ;;
+            esac
+        fi
+        echo "$BRANCHES" | xargs -r git branch -D
+        echo "Branches removidos."
+    fi
+else
+    # default: só branches cujo upstream foi deletado no remote
+    GONE=$(git branch -vv | grep ': gone]' | awk '{print $1}' || true)
+    if [ -z "$GONE" ]; then
+        echo "Nenhum branch com upstream removido."
+    else
+        echo ""
+        echo "Branches com upstream removido:"
+        echo "$GONE" | sed 's/^/  - /'
+        echo ""
+        if [ "$YES" -ne 1 ]; then
+            read -r -p "Deletar essas branches? [y/N] " REPLY
+            case "$REPLY" in
+                [yY]*) ;;
+                *) echo "Pulado."; exit 1 ;;
+            esac
+        fi
+        echo "$GONE" | xargs -r git branch -D
+    fi
+fi
+
+# Prune worktrees
+git worktree prune
+
+echo "Pronto."

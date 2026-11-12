@@ -1,0 +1,7 @@
+#!/bin/bash
+if [ $# -eq 0 ]; then
+  echo "Uso: kill-service-by-ports <porta1> [porta2 ...]"
+  exit 1
+fi
+ports=$(IFS=,; echo "$*")
+lsof -ti :"$ports" 2>/dev/null | xargs -r kill -9 && echo "Portas $ports: processos mortos" || echo "Nenhum processo encontrado nas portas $ports"

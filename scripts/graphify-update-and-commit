@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf '%s\n' "Usage: graphify-update-and-commit [--project PATH] [--message TEXT] [--no-report]"
+}
+
+project=""
+message="chore: update graphify index"
+report_args=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --project)
+      project="$2"
+      shift 2
+      ;;
+    --message|-m)
+      message="$2"
+      shift 2
+      ;;
+    --no-report)
+      report_args+=(--no-report)
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown argument: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ -z "$project" ]; then
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    project="$(git rev-parse --show-toplevel)"
+  else
+    project="$(pwd)"
+  fi
+fi
+
+project="$(cd "$project" && pwd)"
+repo="$(git -C "$project" rev-parse --show-toplevel)"
+
+if ! git -C "$repo" diff --cached --quiet; then
+  printf 'Refusing to commit with pre-existing staged changes.\n' >&2
+  exit 1
+fi
+
+script_dir="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+"$script_dir/graphify-project-sync" --update --project "$project" "${report_args[@]}"
+
+git -C "$repo" add -A -- graphify-out
+git -C "$repo" reset -q -- graphify-runs graphify-out/cache graphify-out/cost.json >/dev/null 2>&1 || true
+
+if git -C "$repo" diff --cached --quiet; then
+  printf 'No Graphify changes to commit.\n'
+  exit 0
+fi
+
+git -C "$repo" commit -m "$message"

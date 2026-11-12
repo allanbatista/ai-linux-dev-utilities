@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  printf '%s\n' "Usage: graphify-project-setup [--project PATH] [--no-sync]"
+}
+
+project="$(pwd)"
+sync="1"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --project)
+      project="$2"
+      shift 2
+      ;;
+    --no-sync)
+      sync="0"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'Unknown argument: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+project="$(cd "$project" && pwd)"
+
+if ! command -v graphify >/dev/null 2>&1; then
+  if command -v uv >/dev/null 2>&1; then
+    uv tool install --upgrade graphifyy
+  else
+    python3 -m pip install --user --upgrade graphifyy
+  fi
+fi
+
+graphify_bin="$(command -v graphify || true)"
+if [ -z "$graphify_bin" ] && [ -x "$HOME/.local/bin/graphify" ]; then
+  graphify_bin="$HOME/.local/bin/graphify"
+fi
+if [ -z "$graphify_bin" ]; then
+  printf 'graphify install completed but graphify is not executable from this environment.\n' >&2
+  exit 1
+fi
+
+"$graphify_bin" --help >/dev/null
+
+if [ "$sync" = "1" ]; then
+  script_dir="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+  "$script_dir/graphify-project-sync" --full --project "$project"
+else
+  printf 'Graphify ready: %s\n' "$graphify_bin"
+fi

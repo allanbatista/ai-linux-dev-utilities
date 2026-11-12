@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Uso: git-prune [--yes]
+
+Remove todos os worktrees e branches locais do repositório atual,
+preservando sempre os branches main e master.
+
+Opções:
+  -y, --yes    Executa sem pedir confirmação.
+  -h, --help   Exibe esta ajuda.
+EOF
+}
+
+assume_yes=0
+for argument in "$@"; do
+    case "$argument" in
+        -y|--yes) assume_yes=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Erro: opção desconhecida '$argument'." >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "Erro: o diretório atual não é um repositório Git." >&2
+    exit 1
+fi
+
+current_branch=$(git branch --show-current)
+if [[ "$current_branch" != "main" && "$current_branch" != "master" ]]; then
+    echo "Erro: execute o comando a partir de um worktree em main ou master." >&2
+    echo "Branch atual: ${current_branch:-HEAD desacoplado}" >&2
+    exit 1
+fi
+
+git worktree prune
+
+worktree_data=$(mktemp)
+trap 'rm -f "$worktree_data"' EXIT
+
+git worktree list --porcelain >"$worktree_data"
+
+declare -a worktree_paths=()
+declare -a worktree_branches=()
+worktree_path=""
+worktree_branch=""
+
+append_worktree() {
+    if [[ -n "$worktree_path" ]]; then
+        worktree_paths+=("$worktree_path")
+        worktree_branches+=("$worktree_branch")
+    fi
+}
+
+while IFS= read -r line || [[ -n "$line" ]]; do
+    case "$line" in
+        worktree\ *)
+            append_worktree
+            worktree_path=${line#worktree }
+            worktree_branch=""
+            ;;
+        branch\ refs/heads/*)
+            worktree_branch=${line#branch refs/heads/}
+            ;;
+    esac
+done <"$worktree_data"
+append_worktree
+
+declare -a removable_worktrees=()
+main_worktree_path=${worktree_paths[0]:-}
+for index in "${!worktree_paths[@]}"; do
+    if [[ "${worktree_paths[$index]}" == "$main_worktree_path" && "${worktree_branches[$index]}" != "main" && "${worktree_branches[$index]}" != "master" ]]; then
+        echo "Erro: o worktree principal precisa estar em main ou master." >&2
+        echo "Branch atual do worktree principal: ${worktree_branches[$index]:-HEAD desacoplado}" >&2
+        exit 1
+    fi
+
+    branch=${worktree_branches[$index]}
+    if [[ "$branch" != "main" && "$branch" != "master" ]]; then
+        removable_worktrees+=("${worktree_paths[$index]}")
+    fi
+done
+
+declare -a removable_branches=()
+while IFS= read -r branch; do
+    [[ -z "$branch" || "$branch" == "main" || "$branch" == "master" ]] && continue
+    removable_branches+=("$branch")
+done < <(git for-each-ref --format='%(refname:short)' refs/heads/)
+
+echo "Worktrees a remover: ${#removable_worktrees[@]}"
+for path in "${removable_worktrees[@]}"; do
+    echo "  - $path"
+done
+
+echo "Branches locais a remover: ${#removable_branches[@]}"
+for branch in "${removable_branches[@]}"; do
+    echo "  - $branch"
+done
+
+if [[ "$assume_yes" -ne 1 ]]; then
+    echo
+    read -r -p "Remover worktrees e branches listados? [y/N] " reply
+    case "$reply" in
+        y|Y|yes|YES|s|S|sim|SIM) ;;
+        *) echo "Cancelado."; exit 1 ;;
+    esac
+fi
+
+for path in "${removable_worktrees[@]}"; do
+    git worktree remove --force "$path"
+done
+
+for branch in "${removable_branches[@]}"; do
+    git branch -D -- "$branch"
+done
+
+git worktree prune
+echo "Pronto. main e master foram preservados."

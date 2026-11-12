@@ -200,6 +200,28 @@ ab util passgenerator 16 --no-punct
 
 `explain` aceita `--with-files`, `--context-dir` e `--verbose`; `gen-script` aceita `--output`, `--full`, `--run`, `--type`, `--lang` e `--output-lang`.
 
+### Comandos personalizados
+
+Os comandos independentes ficam em [`scripts/`](scripts/) e são executados diretamente pelo nome:
+
+| Finalidade | Comandos |
+| --- | --- |
+| Git e worktrees | `git-cleanup`, `git-prune`, `gh-loc-chart`, `mkworktree`, `rmworktree` |
+| Arquivos e mídia | `avi-to-mp4`, `video_to_whatsapp`, `image-normalizer`, `img-remove-croma`, `rm-node-modules` |
+| Serviços locais | `httpserver`, `kill-service-by-ports`, `docker-clean.sh` |
+| Graphify | `graphify-project-setup`, `graphify-project-sync`, `graphify-update-and-commit` |
+| Open Design | `open-design`, `open-design-mcp`, `update-open-design` |
+
+Para disponibilizá-los no terminal a partir deste checkout:
+
+```bash
+export PATH="$PWD/scripts:$PATH"
+avi-to-mp4 --help
+httpserver --help
+```
+
+Cada comando mantém seus pré-requisitos: `ffmpeg` para vídeo, `gh` autenticado e `jq` para `gh-loc-chart`, Docker para limpeza e as instalações correspondentes para Graphify e Open Design. `docker-clean.sh` executa a limpeza imediatamente, incluindo volumes.
+
 ### Mídia
 
 ```bash

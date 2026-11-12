@@ -1,0 +1,240 @@
+#!/bin/bash
+
+WORKTREE_ROOT="$HOME/Workspaces/worktrees"
+
+usage() {
+    echo "Uso: rmworktree [-y|--yes] [-f|--force] <dir> [<dir>...]"
+    echo ""
+    echo "Remove um ou mais worktrees git, deduzindo repositório de origem e branch"
+    echo "diretamente do diretório do worktree (via 'git rev-parse')."
+    echo ""
+    echo "Argumentos:"
+    echo "  <dir>              Caminho do diretório do worktree a remover."
+    echo "                     Múltiplos caminhos e globs do shell são suportados."
+    echo ""
+    echo "Opções:"
+    echo "  -y, --yes          Não pedir confirmação."
+    echo "  -f, --force        Forçar remoção mesmo com alterações não commitadas."
+    echo ""
+    echo "Exemplos:"
+    echo "  rmworktree ~/Workspaces/worktrees/projeto-feature-x"
+    echo "  rmworktree ~/Workspaces/worktrees/projeto-feature-* -y"
+    echo "  rmworktree ~/Workspaces/worktrees/* -f -y"
+    exit 2
+}
+
+remove_orphan_dir() {
+    local dir="$1"
+
+    if rm -rf -- "$dir" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if command -v sudo >/dev/null 2>&1 && sudo -n rm -rf -- "$dir" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
+}
+
+ASSUME_YES=0
+FORCE=0
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        -y|--yes) ASSUME_YES=1 ;;
+        -f|--force) FORCE=1 ;;
+        -h|--help) usage ;;
+        -*) echo "Erro: opção desconhecida '$arg'." >&2; usage ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+
+[ ${#ARGS[@]} -eq 0 ] && usage
+
+CURRENT_DIR=$(pwd -P)
+
+TARGETS_DIR=()
+TARGETS_SOURCE=()
+TARGETS_BRANCH=()
+SKIPPED=0
+DIRECT_REMOVED=""
+REMOVED=0
+FAILED=0
+
+for raw in "${ARGS[@]}"; do
+    if [ ! -e "$raw" ]; then
+        echo "Ignorado: '$raw' não existe." >&2
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+
+    if [ ! -d "$raw" ]; then
+        echo "Ignorado: '$raw' não é um diretório." >&2
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+
+    DIR_ABS=$(cd "$raw" 2>/dev/null && pwd -P)
+    if [ -z "$DIR_ABS" ]; then
+        echo "Ignorado: não consegui resolver caminho de '$raw'." >&2
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+
+    case "$CURRENT_DIR" in
+        "$DIR_ABS"|"$DIR_ABS"/*)
+            echo "Ignorado: você está dentro de '$DIR_ABS'. Saia desse diretório (cd ..) antes de removê-lo." >&2
+            SKIPPED=$((SKIPPED + 1))
+            continue
+            ;;
+    esac
+
+    GIT_DIR=$(git -C "$DIR_ABS" rev-parse --git-dir 2>/dev/null)
+    if [ -z "$GIT_DIR" ]; then
+        case "$DIR_ABS" in
+            "$WORKTREE_ROOT"/*)
+                if [ "$FORCE" -eq 1 ]; then
+                    if remove_orphan_dir "$DIR_ABS"; then
+                        echo "Removido: '$DIR_ABS' (diretório órfão sob WORKTREE_ROOT)." >&2
+                        REMOVED=$((REMOVED + 1))
+                        DIRECT_REMOVED=1
+                    else
+                        echo "Falha ao remover diretório órfão: '$DIR_ABS'." >&2
+                        FAILED=$((FAILED + 1))
+                    fi
+                else
+                    echo "Ignorado: '$DIR_ABS' não é um repositório git." >&2
+                    SKIPPED=$((SKIPPED + 1))
+                fi
+                continue
+                ;;
+        esac
+        echo "Ignorado: '$DIR_ABS' não é um repositório git." >&2
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+
+    GIT_COMMON=$(git -C "$DIR_ABS" rev-parse --git-common-dir 2>/dev/null)
+    GIT_DIR_ABS=$(cd "$DIR_ABS" && cd "$GIT_DIR" && pwd -P)
+    GIT_COMMON_ABS=$(cd "$DIR_ABS" && cd "$GIT_COMMON" && pwd -P)
+
+    if [ "$GIT_DIR_ABS" = "$GIT_COMMON_ABS" ]; then
+        echo "Ignorado: '$DIR_ABS' é o repositório principal, não um worktree. Recusando remover." >&2
+        SKIPPED=$((SKIPPED + 1))
+        continue
+    fi
+
+    case "$GIT_COMMON_ABS" in
+        */.git) SOURCE_ABS=$(dirname "$GIT_COMMON_ABS") ;;
+        *)      SOURCE_ABS="$GIT_COMMON_ABS" ;;
+    esac
+
+    BRANCH=$(git -C "$DIR_ABS" rev-parse --abbrev-ref HEAD 2>/dev/null)
+
+    TARGETS_DIR+=("$DIR_ABS")
+    TARGETS_SOURCE+=("$SOURCE_ABS")
+    TARGETS_BRANCH+=("$BRANCH")
+done
+
+if [ ${#TARGETS_DIR[@]} -eq 0 ]; then
+    if [ -n "$DIRECT_REMOVED" ] || [ "$FAILED" -gt 0 ]; then
+        echo "Concluído: $REMOVED removido(s), $FAILED falha(s), $SKIPPED ignorado(s)."
+        if [ "$FAILED" -gt 0 ]; then
+            exit 1
+        fi
+        exit 0
+    fi
+    echo "Nenhum alvo válido para remover." >&2
+    exit 1
+fi
+
+echo "Removendo ${#TARGETS_DIR[@]} worktree(s):"
+for i in "${!TARGETS_DIR[@]}"; do
+    if [ "${TARGETS_BRANCH[$i]}" = "HEAD" ]; then
+        printf "  %s  → (detached HEAD)  → repo: %s\n" "${TARGETS_DIR[$i]}" "${TARGETS_SOURCE[$i]}"
+    else
+        printf "  %s  → branch: %s  → repo: %s\n" "${TARGETS_DIR[$i]}" "${TARGETS_BRANCH[$i]}" "${TARGETS_SOURCE[$i]}"
+    fi
+done
+echo ""
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+    read -r -p "Confirmar remoção? [y/N] " reply
+    case "$reply" in
+        y|Y|yes|YES|s|S|sim|SIM) ;;
+        *) echo "Cancelado."; exit 1 ;;
+    esac
+fi
+for i in "${!TARGETS_DIR[@]}"; do
+    DIR_ABS="${TARGETS_DIR[$i]}"
+    SOURCE_ABS="${TARGETS_SOURCE[$i]}"
+    BRANCH="${TARGETS_BRANCH[$i]}"
+
+    echo ""
+    echo "→ $DIR_ABS"
+
+    if [ "$FORCE" -eq 1 ]; then
+        if REMOVE_OUTPUT=$(git -C "$SOURCE_ABS" worktree remove --force "$DIR_ABS" 2>&1); then
+            echo "  Worktree removido."
+        else
+            if printf '%s\n' "$REMOVE_OUTPUT" | grep -qi "not a working tree"; then
+                if remove_orphan_dir "$DIR_ABS"; then
+                    git -C "$SOURCE_ABS" worktree prune >/dev/null 2>&1 || true
+                    echo "  Diretório removido diretamente (worktree fora de sincronia)."
+                else
+                    echo "  Falha ao remover diretório órfão." >&2
+                    FAILED=$((FAILED + 1))
+                    continue
+                fi
+            else
+                printf '%s\n' "$REMOVE_OUTPUT" >&2
+                echo "  Falha ao remover worktree." >&2
+                FAILED=$((FAILED + 1))
+                continue
+            fi
+        fi
+    else
+        if REMOVE_OUTPUT=$(git -C "$SOURCE_ABS" worktree remove "$DIR_ABS" 2>&1); then
+            echo "  Worktree removido."
+        else
+            if printf '%s\n' "$REMOVE_OUTPUT" | grep -qi "not a working tree"; then
+                if remove_orphan_dir "$DIR_ABS"; then
+                    git -C "$SOURCE_ABS" worktree prune >/dev/null 2>&1 || true
+                    echo "  Diretório removido diretamente (worktree fora de sincronia)."
+                else
+                    echo "  Falha ao remover diretório órfão." >&2
+                    FAILED=$((FAILED + 1))
+                    continue
+                fi
+            else
+                printf '%s\n' "$REMOVE_OUTPUT" >&2
+                echo "  Falha ao remover worktree (provavelmente alterações não commitadas ou locked). Use -f para forçar." >&2
+                FAILED=$((FAILED + 1))
+                continue
+            fi
+        fi
+    fi
+
+    if [ "$BRANCH" != "HEAD" ] && [ -n "$BRANCH" ]; then
+        if git -C "$SOURCE_ABS" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+            if git -C "$SOURCE_ABS" branch -D "$BRANCH" >/dev/null 2>&1; then
+                echo "  Branch local deletada: $BRANCH"
+            else
+                echo "  Aviso: não consegui deletar branch local '$BRANCH'." >&2
+            fi
+        else
+            echo "  Branch local '$BRANCH' já não existe — ignorado."
+        fi
+    fi
+
+    REMOVED=$((REMOVED + 1))
+done
+
+echo ""
+echo "Concluído: $REMOVED removido(s), $FAILED falha(s), $SKIPPED ignorado(s)."
+
+if [ "$FAILED" -gt 0 ] || [ "$SKIPPED" -gt 0 ]; then
+    exit 1
+fi
+exit 0

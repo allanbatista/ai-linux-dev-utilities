@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+
+import argparse
+import glob
+import shutil
+import subprocess
+from pathlib import Path
+
+
+def parse_args() -> tuple[argparse.Namespace, argparse.ArgumentParser]:
+    parser = argparse.ArgumentParser(
+        description="Converte AVI para MP4 sem recodificar e sem perder qualidade.",
+        epilog=(
+            "Exemplos:\n"
+            "  avi-to-mp4 video.avi\n"
+            "  avi-to-mp4 '*.avi' -o ./mp4\n"
+            "  avi-to-mp4 ./videos --output-dir ./mp4\n"
+            "  avi-to-mp4 './videos/**/*.avi' -o ./mp4"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("inputs", nargs="+", help="arquivo, padrão glob ou diretório")
+    parser.add_argument(
+        "-o",
+        "--output-dir",
+        type=Path,
+        help="diretório de saída; por padrão, usa o diretório de cada arquivo",
+    )
+    return parser.parse_args(), parser
+
+
+def find_inputs(raw_inputs: list[str], parser: argparse.ArgumentParser) -> list[Path]:
+    found: dict[Path, None] = {}
+
+    for raw in raw_inputs:
+        path = Path(raw).expanduser()
+        if path.is_dir():
+            matches = path.iterdir()
+        elif path.is_file():
+            matches = [path]
+        else:
+            matches = map(Path, glob.iglob(str(path), recursive=True))
+
+        avi_files = [
+            match.resolve()
+            for match in matches
+            if match.is_file() and match.suffix.lower() == ".avi"
+        ]
+        if not avi_files:
+            parser.error(f"nenhum arquivo AVI encontrado para: {raw}")
+        found.update(dict.fromkeys(sorted(avi_files)))
+
+    return list(found)
+
+
+def main() -> int:
+    args, parser = parse_args()
+
+    if not shutil.which("ffmpeg"):
+        parser.error("ffmpeg não está instalado ou não está no PATH")
+
+    inputs = find_inputs(args.inputs, parser)
+    output_dir = args.output_dir.expanduser().resolve() if args.output_dir else None
+    if output_dir:
+        if output_dir.exists() and not output_dir.is_dir():
+            parser.error(f"diretório de saída inválido: {output_dir}")
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    jobs: list[tuple[Path, Path]] = []
+    destinations: set[Path] = set()
+    for source in inputs:
+        destination = (output_dir or source.parent) / f"{source.stem}.mp4"
+        destination = destination.resolve()
+        if destination in destinations:
+            parser.error(f"mais de uma entrada geraria: {destination}")
+        if destination.exists():
+            parser.error(f"arquivo de saída já existe: {destination}")
+        destinations.add(destination)
+        jobs.append((source, destination))
+
+    for source, destination in jobs:
+        print(f"{source} -> {destination}")
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-n",
+                    "-i",
+                    str(source),
+                    "-map",
+                    "0",
+                    "-c",
+                    "copy",
+                    "-movflags",
+                    "+faststart",
+                    str(destination),
+                ],
+                check=True,
+            )
+        except subprocess.CalledProcessError as error:
+            destination.unlink(missing_ok=True)
+            return error.returncode
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

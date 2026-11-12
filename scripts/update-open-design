@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="${OPEN_DESIGN_REPO:-$HOME/Workspaces/open-design}"
+data_dir="${OPEN_DESIGN_DATA_DIR:-$HOME/Apps/open-design/data}"
+
+mkdir -p "$data_dir"
+
+timeout 180s git -C "$repo" pull --ff-only
+corepack pnpm --dir "$repo" install --frozen-lockfile
+corepack pnpm --dir "$repo" --filter @open-design/contracts build
+corepack pnpm --dir "$repo" --filter @open-design/registry-protocol build
+corepack pnpm --dir "$repo" --filter @open-design/daemon build
+
+script_dir="$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")"
+"$script_dir/open-design" --help >/dev/null
+echo "Open Design CLI updated: $repo/apps/daemon/dist/cli.js"

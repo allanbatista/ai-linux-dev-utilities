@@ -1,0 +1,481 @@
+#!/bin/bash
+
+set -e
+
+REPO_FILTER=""
+ORG_FILTER=""
+ORG_DISPLAY=""
+DAYS=30
+WIDTH=50
+INCLUDE_DELETIONS=0
+
+usage() {
+    echo "Uso: gh-loc-chart [--repo owner/nome | --org OWNER] [--dias N] [--liquido]"
+    echo ""
+    echo "Mostra um gráfico de barras no terminal com a quantidade de linhas de"
+    echo "código que o seu usuário GitHub adicionou nos últimos N dias."
+    echo ""
+    echo "Por padrão conta apenas linhas adicionadas. Use --liquido para somar"
+    echo "(adicionadas - removidas)."
+    echo ""
+    echo "Opções:"
+    echo "  --repo owner/nome    Filtra por um repositório específico."
+    echo "  --org OWNER          Avalia todos os repositórios acessíveis desse owner."
+    echo "  --dias N             Janela em dias (padrão: 30)."
+    echo "  --liquido            Conta líquido (additions - deletions)."
+    echo "  -h, --help           Mostra esta mensagem."
+    echo ""
+    echo "Requisitos:"
+    echo "  - gh CLI autenticado (gh auth login) com escopo 'repo' para repos privados"
+    echo "  - jq"
+    echo ""
+    echo "Notas:"
+    echo "  - Considera apenas commits na branch default de cada repositório."
+    echo "  - Inclui repositórios privados aos quais você tem acesso."
+    echo "  - Ignora arquivos em graphify-out/, .sdd/ e .features/."
+    exit 1
+}
+
+require_value() {
+    if [ $# -lt 2 ] || [[ "$2" == --* ]]; then
+        echo "Erro: $1 precisa de um valor."
+        exit 1
+    fi
+}
+
+supports_color() {
+    if [ -n "${FORCE_COLOR:-}" ]; then
+        return 0
+    fi
+    if [ -n "${NO_COLOR:-}" ]; then
+        return 1
+    fi
+    [ -t 1 ]
+}
+
+USE_COLOR=0
+if supports_color; then
+    USE_COLOR=1
+fi
+
+repeat_block() {
+    local count="$1"
+    local out=""
+    while [ "$count" -gt 0 ]; do
+        out="${out}█"
+        count=$((count - 1))
+    done
+    printf '%s' "$out"
+}
+
+repo_color_code() {
+    printf '%s' "$1" | cksum | awk '{ print 16 + ($1 % 216) }'
+}
+
+repo_bar_segment() {
+    local repo="$1"
+    local count="$2"
+    local blocks color
+    blocks=$(repeat_block "$count")
+    if [ "$USE_COLOR" = "1" ]; then
+        color=$(repo_color_code "$repo")
+        printf '\033[38;5;%sm%s\033[0m' "$color" "$blocks"
+    else
+        printf '%s' "$blocks"
+    fi
+}
+
+repo_swatch() {
+    local repo="$1"
+    local color
+    if [ "$USE_COLOR" = "1" ]; then
+        color=$(repo_color_code "$repo")
+        printf '\033[38;5;%sm█\033[0m' "$color"
+    fi
+}
+
+history_result_ok() {
+    printf '%s\n' "$1" | jq -e '
+        (((.errors? // []) | length) == 0) and
+        ((try .data.repository.defaultBranchRef.target.history catch null) != null)
+    ' >/dev/null 2>&1
+}
+
+org_result_ok() {
+    printf '%s\n' "$1" | jq -e '
+        (((.errors? // []) | length) == 0) and
+        (.data.repositoryOwner != null)
+    ' >/dev/null 2>&1
+}
+
+commit_loc_value() {
+    local owner="$1"
+    local name="$2"
+    local sha="$3"
+    local commit_json
+
+    commit_json=$(gh api "repos/$owner/$name/commits/$sha") || return 1
+    echo "$commit_json" | jq --argjson include_deletions "$INCLUDE_DELETIONS" '
+        [
+            .files[]?
+	    | select((.filename | startswith("graphify-out/") or startswith(".sdd/") or startswith(".features/") or startswith(".changelog/")) | not)
+            | (.additions - (if $include_deletions == 1 then .deletions else 0 end))
+        ] | add // 0
+    '
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --repo) require_value "$@"; REPO_FILTER="$2"; shift 2 ;;
+        --org) require_value "$@"; ORG_FILTER="$2"; shift 2 ;;
+        --dias) require_value "$@"; DAYS="$2"; shift 2 ;;
+        --liquido) INCLUDE_DELETIONS=1; shift ;;
+        -h|--help) usage ;;
+        *) echo "Argumento desconhecido: $1"; usage ;;
+    esac
+done
+
+if [ -n "$REPO_FILTER" ] && [ -n "$ORG_FILTER" ]; then
+    echo "Erro: --repo e --org são opções mutuamente exclusivas."
+    exit 1
+fi
+
+if ! [[ "$DAYS" =~ ^[0-9]+$ ]] || [ "$DAYS" -lt 1 ]; then
+    echo "Erro: --dias precisa ser inteiro positivo."
+    exit 1
+fi
+
+command -v gh >/dev/null 2>&1 || { echo "Erro: 'gh' CLI não encontrado."; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "Erro: 'jq' não encontrado."; exit 1; }
+
+if ! gh auth status >/dev/null 2>&1; then
+    echo "Erro: gh CLI não autenticado. Rode: gh auth login"
+    exit 1
+fi
+
+USER_JSON=$(gh api user)
+USER_LOGIN=$(echo "$USER_JSON" | jq -r .login)
+USER_ID=$(echo "$USER_JSON" | jq -r .node_id)
+
+FROM_DATE=$(date -u -d "$DAYS days ago" +%Y-%m-%d)
+FROM_ISO="${FROM_DATE}T00:00:00Z"
+TO_ISO=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ORG_DISPLAY="$ORG_FILTER"
+
+echo "Usuário:       $USER_LOGIN"
+echo "Janela:        últimos $DAYS dias (desde $FROM_DATE)"
+[ -n "$REPO_FILTER" ] && echo "Repositório:   $REPO_FILTER"
+[ -n "$ORG_FILTER" ] && echo "Organização:   $ORG_DISPLAY"
+[ "$INCLUDE_DELETIONS" = "1" ] && echo "Modo:          líquido (additions - deletions)"
+echo ""
+
+if [ -n "$REPO_FILTER" ]; then
+    REPOS="$REPO_FILTER"
+elif [ -n "$ORG_FILTER" ]; then
+    echo "Listando repositórios da organização..."
+    REPOS=""
+    ORG_CURSOR=""
+    ORG_DISPLAY="$ORG_FILTER"
+    ORG_QUERY='query($login: String!, $cursor: String) {
+      repositoryOwner(login: $login) {
+        login
+        repositories(first: 100, after: $cursor, orderBy: {field: PUSHED_AT, direction: DESC}) {
+          pageInfo { hasNextPage endCursor }
+          nodes { nameWithOwner owner { login } }
+        }
+      }
+    }'
+
+    while :; do
+        if [ -z "$ORG_CURSOR" ]; then
+            if ! ORG_RESULT=$(gh api graphql -F login="$ORG_FILTER" -f query="$ORG_QUERY" 2>/dev/null); then
+                echo "Erro: não foi possível acessar a organização '$ORG_FILTER'."
+                exit 1
+            fi
+        else
+            if ! ORG_RESULT=$(gh api graphql -F login="$ORG_FILTER" -F cursor="$ORG_CURSOR" -f query="$ORG_QUERY" 2>/dev/null); then
+                echo "Erro: não foi possível listar todos os repositórios de '$ORG_FILTER'."
+                exit 1
+            fi
+        fi
+
+        if ! org_result_ok "$ORG_RESULT"; then
+            echo "Erro: organização '$ORG_FILTER' inexistente, inacessível ou inválida."
+            exit 1
+        fi
+
+        ORG_DISPLAY=$(echo "$ORG_RESULT" | jq -r '.data.repositoryOwner.login // empty')
+        [ -n "$ORG_DISPLAY" ] || ORG_DISPLAY="$ORG_FILTER"
+
+        PAGE_REPOS=$(echo "$ORG_RESULT" | jq -r '
+            .data.repositoryOwner as $owner
+            | $owner.repositories.nodes[]?
+            | select((.owner.login | ascii_downcase) == ($owner.login | ascii_downcase))
+            | .nameWithOwner')
+        if [ -n "$PAGE_REPOS" ]; then
+            if [ -n "$REPOS" ]; then
+                REPOS="${REPOS}"$'\n'"${PAGE_REPOS}"
+            else
+                REPOS="$PAGE_REPOS"
+            fi
+        fi
+
+        HAS_NEXT=$(echo "$ORG_RESULT" | jq -r '.data.repositoryOwner.repositories.pageInfo.hasNextPage // false')
+        [ "$HAS_NEXT" != "true" ] && break
+        ORG_CURSOR=$(echo "$ORG_RESULT" | jq -r '.data.repositoryOwner.repositories.pageInfo.endCursor')
+    done
+
+    REPOS=$(printf "%s\n" "$REPOS" | sort -u)
+else
+    echo "Listando repositórios com contribuições..."
+    REPOS=$(gh api graphql \
+        -F login="$USER_LOGIN" -F from="$FROM_ISO" -F to="$TO_ISO" \
+        -f query='
+            query($login: String!, $from: DateTime!, $to: DateTime!) {
+              user(login: $login) {
+                contributionsCollection(from: $from, to: $to) {
+                  commitContributionsByRepository(maxRepositories: 100) {
+                    repository { nameWithOwner isFork }
+                  }
+                  pullRequestContributionsByRepository(maxRepositories: 100) {
+                    repository { nameWithOwner isFork }
+                  }
+                }
+              }
+              viewer {
+                repositoriesContributedTo(
+                  first: 100
+                  includeUserRepositories: true
+                  contributionTypes: [COMMIT, PULL_REQUEST]
+                  orderBy: {field: PUSHED_AT, direction: DESC}
+                ) {
+                  nodes { nameWithOwner pushedAt isFork }
+                }
+                repositories(
+                  first: 100
+                  affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
+                  orderBy: {field: PUSHED_AT, direction: DESC}
+                ) {
+                  nodes { nameWithOwner pushedAt isFork }
+                }
+              }
+            }' \
+        -q '[
+              .data.user.contributionsCollection.commitContributionsByRepository[].repository.nameWithOwner,
+              .data.user.contributionsCollection.pullRequestContributionsByRepository[].repository.nameWithOwner,
+              .data.viewer.repositoriesContributedTo.nodes[]?
+                | select(.pushedAt >= "'"$FROM_ISO"'") | .nameWithOwner,
+              .data.viewer.repositories.nodes[]?
+                | select(.pushedAt >= "'"$FROM_ISO"'") | .nameWithOwner
+            ] | unique | .[]')
+fi
+
+if [ -z "$REPOS" ]; then
+    if [ -n "$ORG_FILTER" ]; then
+        echo "Nenhum repositório acessível encontrado para a organização '$ORG_FILTER'."
+    else
+        echo "Nenhum repositório encontrado no período."
+    fi
+    exit 0
+fi
+
+declare -A DAY_LOC
+declare -A REPO_LOC
+declare -A DAY_REPO_LOC
+FAILED_REPOS=()
+TOTAL_COMMITS=0
+
+HISTORY_QUERY='query($owner: String!, $name: String!, $authorId: ID!, $since: GitTimestamp!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(author: {id: $authorId}, since: $since, first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes { oid committedDate }
+          }
+        }
+      }
+    }
+  }
+}'
+
+while read -r REPO; do
+    [ -z "$REPO" ] && continue
+    OWNER="${REPO%%/*}"
+    NAME="${REPO##*/}"
+    echo "  $REPO" >&2
+
+    CURSOR=""
+    REPO_FAILED=0
+    while :; do
+        if [ -z "$CURSOR" ]; then
+            if ! RESULT=$(gh api graphql \
+                -F owner="$OWNER" -F name="$NAME" \
+                -F authorId="$USER_ID" -F since="$FROM_ISO" \
+                -f query="$HISTORY_QUERY" 2>/dev/null); then
+                FAILED_REPOS+=("$REPO")
+                break
+            fi
+        else
+            if ! RESULT=$(gh api graphql \
+                -F owner="$OWNER" -F name="$NAME" \
+                -F authorId="$USER_ID" -F since="$FROM_ISO" \
+                -F cursor="$CURSOR" \
+                -f query="$HISTORY_QUERY" 2>/dev/null); then
+                FAILED_REPOS+=("$REPO")
+                break
+            fi
+        fi
+
+        if ! history_result_ok "$RESULT"; then
+            FAILED_REPOS+=("$REPO")
+            break
+        fi
+
+        NODES=$(echo "$RESULT" | jq -r '.data.repository.defaultBranchRef.target.history.nodes[]? | "\(.oid)\t\(.committedDate)"')
+
+        if [ -n "$NODES" ]; then
+            while IFS=$'\t' read -r SHA DATE; do
+                [ -z "$DATE" ] && continue
+                if ! VAL=$(commit_loc_value "$OWNER" "$NAME" "$SHA"); then
+                    FAILED_REPOS+=("$REPO")
+                    REPO_FAILED=1
+                    break
+                fi
+                DAY="${DATE%%T*}"
+                DAY_LOC[$DAY]=$(( ${DAY_LOC[$DAY]:-0} + VAL ))
+                REPO_LOC[$REPO]=$(( ${REPO_LOC[$REPO]:-0} + VAL ))
+                DAY_REPO_KEY="${DAY}"$'\t'"${REPO}"
+                DAY_REPO_LOC["$DAY_REPO_KEY"]=$(( ${DAY_REPO_LOC["$DAY_REPO_KEY"]:-0} + VAL ))
+                TOTAL_COMMITS=$((TOTAL_COMMITS + 1))
+            done <<< "$NODES"
+        fi
+
+        [ "$REPO_FAILED" = "1" ] && break
+        HAS_NEXT=$(echo "$RESULT" | jq -r '.data.repository.defaultBranchRef.target.history.pageInfo.hasNextPage // false')
+        [ "$HAS_NEXT" != "true" ] && break
+        CURSOR=$(echo "$RESULT" | jq -r '.data.repository.defaultBranchRef.target.history.pageInfo.endCursor')
+    done
+done <<< "$REPOS"
+
+if [ "${#FAILED_REPOS[@]}" -gt 0 ]; then
+    if [ -n "$REPO_FILTER" ]; then
+        echo "Erro: não foi possível avaliar o repositório '$REPO_FILTER'."
+        exit 1
+    fi
+    echo ""
+    echo "Aviso: alguns repositórios foram ignorados por erro:"
+    for repo in "${FAILED_REPOS[@]}"; do
+        echo "  $repo"
+    done
+fi
+
+echo ""
+echo "Commits processados: $TOTAL_COMMITS"
+
+DAYS_LIST=()
+for ((i=DAYS-1; i>=0; i--)); do
+    d=$(date -u -d "$i days ago" +%Y-%m-%d)
+    DAYS_LIST+=("$d")
+done
+
+MAX=0
+TOTAL_LOC=0
+for d in "${DAYS_LIST[@]}"; do
+    v=${DAY_LOC[$d]:-0}
+    [ "$v" -gt "$MAX" ] && MAX=$v
+    TOTAL_LOC=$((TOTAL_LOC + v))
+done
+
+LABEL="adicionadas"
+[ "$INCLUDE_DELETIONS" = "1" ] && LABEL="líquidas"
+VALUE_WIDTH=${#MAX}
+[ "$VALUE_WIDTH" -lt 1 ] && VALUE_WIDTH=1
+
+echo ""
+echo "Linhas $LABEL por dia (máx=$MAX, total=$TOTAL_LOC):"
+echo ""
+
+for d in "${DAYS_LIST[@]}"; do
+    day_total=${DAY_LOC[$d]:-0}
+    if [ "$MAX" -gt 0 ] && [ "$day_total" -gt 0 ]; then
+        bars=$(( day_total * WIDTH / MAX ))
+        [ "$bars" -lt 1 ] && bars=1
+    else
+        bars=0
+    fi
+    bar=""
+    if [ "$bars" -gt 0 ]; then
+        day_repos=()
+        day_values=()
+        while read -r repo; do
+            [ -z "$repo" ] && continue
+            repo_value=${DAY_REPO_LOC["$d"$'\t'"$repo"]:-0}
+            if [ "$repo_value" -gt 0 ]; then
+                day_repos+=("$repo")
+                day_values+=("$repo_value")
+            fi
+        done <<< "$REPOS"
+
+        if [ "${#day_repos[@]}" -eq 0 ]; then
+            bar=$(repeat_block "$bars")
+        else
+            segs=()
+            remainders=()
+            used=()
+            assigned=0
+            for i in "${!day_repos[@]}"; do
+                repo_value=${day_values[$i]}
+                seg=$(( repo_value * bars / day_total ))
+                rem=$(( repo_value * bars % day_total ))
+                segs[$i]=$seg
+                remainders[$i]=$rem
+                assigned=$((assigned + seg))
+            done
+
+            remaining=$((bars - assigned))
+            while [ "$remaining" -gt 0 ]; do
+                best_i=-1
+                best_rem=-1
+                for i in "${!day_repos[@]}"; do
+                    if [ "${used[$i]:-0}" -eq 1 ]; then
+                        continue
+                    fi
+                    if [ "${remainders[$i]}" -gt "$best_rem" ]; then
+                        best_rem=${remainders[$i]}
+                        best_i=$i
+                    fi
+                done
+                [ "$best_i" -ge 0 ] || break
+                segs[$best_i]=$((segs[$best_i] + 1))
+                used[$best_i]=1
+                remaining=$((remaining - 1))
+            done
+
+            for i in "${!day_repos[@]}"; do
+                if [ "${segs[$i]}" -gt 0 ]; then
+                    bar="${bar}$(repo_bar_segment "${day_repos[$i]}" "${segs[$i]}")"
+                fi
+            done
+        fi
+    fi
+    bar_space=$(printf '%*s' "$((WIDTH - bars))" '')
+    printf "  %s │ %s%s │ %${VALUE_WIDTH}d\n" "$d" "$bar" "$bar_space" "$day_total"
+done
+
+if [ -z "$REPO_FILTER" ] && [ "${#REPO_LOC[@]}" -gt 0 ]; then
+    echo ""
+    echo "Por repositório:"
+    {
+        for repo in "${!REPO_LOC[@]}"; do
+            printf "%d\t%s\n" "${REPO_LOC[$repo]}" "$repo"
+        done
+    } | sort -rn | while IFS=$'\t' read -r total repo; do
+        if [ "$USE_COLOR" = "1" ]; then
+            printf "  %s %s: %s\n" "$(repo_swatch "$repo")" "$repo" "$total"
+        else
+            printf "  %s: %s\n" "$repo" "$total"
+        fi
+    done
+fi

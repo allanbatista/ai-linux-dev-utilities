@@ -1,0 +1,47 @@
+#!/bin/bash
+
+set -e
+
+usage() {
+    echo "Uso: video_to_whatsapp <arquivo_entrada> [arquivo_saida]"
+    echo ""
+    echo "Converte vídeo (mp4, webm, mkv, ...) para formato compatível com WhatsApp."
+    echo "Se arquivo_saida não for informado, salva com sufixo _whatsapp."
+    echo ""
+    echo "Exemplos:"
+    echo "  video_to_whatsapp gravacao.mp4"
+    echo "  video_to_whatsapp gravacao.mp4 saida.mp4"
+    exit 1
+}
+
+[ $# -lt 1 ] && usage
+
+INPUT="$1"
+
+if [ ! -f "$INPUT" ]; then
+    echo "Erro: arquivo '$INPUT' não encontrado."
+    exit 1
+fi
+
+if [ -n "$2" ]; then
+    OUTPUT="$2"
+else
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    ORIGINAL=$(basename "${INPUT%.*}")
+    OUTPUT="$(pwd)/wa_${TIMESTAMP}_${ORIGINAL}.mp4"
+fi
+
+echo "Convertendo: $INPUT → $OUTPUT"
+
+ffmpeg -fflags +genpts -i "$INPUT" \
+    -map 0:v:0 -map 0:a:0? \
+    -vf "scale=max(2\,trunc(iw/2)*2):max(2\,trunc(ih/2)*2)" \
+    -c:v libx264 -profile:v main \
+    -pix_fmt yuv420p -crf 23 -fps_mode cfr \
+    -c:a aac -b:a 128k \
+    -movflags +faststart \
+    "$OUTPUT"
+
+SIZE=$(du -h "$OUTPUT" | cut -f1)
+echo ""
+echo "Concluído: $OUTPUT ($SIZE)"

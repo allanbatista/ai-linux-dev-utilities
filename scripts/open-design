@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="${OPEN_DESIGN_REPO:-$HOME/Workspaces/open-design}"
+data_dir="${OPEN_DESIGN_DATA_DIR:-$HOME/Apps/open-design/data}"
+cli="$repo/apps/daemon/dist/cli.js"
+
+if [ ! -f "$cli" ]; then
+  echo "Open Design CLI is not built. Run: update-open-design" >&2
+  exit 1
+fi
+
+mkdir -p "$data_dir"
+export OD_DATA_DIR="$data_dir"
+
+if [ "${1:-}" = "cli" ]; then
+  shift
+  exec node "$cli" "$@"
+fi
+
+host="127.0.0.1"
+web_port="7456"
+daemon_port=""
+pass_args=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --host)
+      host="${2:?missing value for --host}"
+      shift 2
+      ;;
+    --host=*)
+      host="${1#--host=}"
+      shift
+      ;;
+    --port)
+      web_port="${2:?missing value for --port}"
+      shift 2
+      ;;
+    --port=*)
+      web_port="${1#--port=}"
+      shift
+      ;;
+    --daemon-port)
+      daemon_port="${2:?missing value for --daemon-port}"
+      shift 2
+      ;;
+    --daemon-port=*)
+      daemon_port="${1#--daemon-port=}"
+      shift
+      ;;
+    --no-open)
+      shift
+      ;;
+    *)
+      pass_args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ "$host" != "127.0.0.1" ] && [ "$host" != "localhost" ]; then
+  echo "tools-dev binds local web/daemon to 127.0.0.1; unsupported --host: $host" >&2
+  exit 1
+fi
+
+if [ -z "$daemon_port" ]; then
+  daemon_port=$((web_port + 1))
+fi
+
+daemon_log="$data_dir/daemon.log"
+
+export OD_PORT="$daemon_port"
+export OD_WEB_PORT="$web_port"
+export OD_ALLOWED_ORIGINS="${OD_ALLOWED_ORIGINS:-http://127.0.0.1:$web_port,http://localhost:$web_port}"
+
+node "$cli" --host 127.0.0.1 --port "$daemon_port" --no-open >"$daemon_log" 2>&1 &
+daemon_pid=$!
+
+cleanup() {
+  kill "$daemon_pid" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+corepack pnpm --dir "$repo/apps/web" exec next dev --turbopack \
+  -H 127.0.0.1 \
+  -p "$web_port" \
+  "${pass_args[@]}"

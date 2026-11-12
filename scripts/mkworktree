@@ -1,0 +1,110 @@
+#!/bin/bash
+
+set -e
+
+WORKTREE_ROOT="$HOME/Workspaces/worktrees"
+
+usage() {
+    echo "Uso: mkworktree [-i] <novo-branch> <branch-origin> <diretorio-origem>"
+    echo ""
+    echo "Cria um git worktree em $WORKTREE_ROOT/<origem>-<novo-branch-sanitizado>/"
+    echo "criando uma nova branch <novo-branch> a partir de <branch-origin>."
+    echo "Caracteres não-alfanuméricos no nome da branch são substituídos por '-'."
+    echo "Arquivos e diretórios não versionados (untracked/ignorados, ex.: .env,"
+    echo "node_modules) são copiados para o worktree, preservando symlinks."
+    echo ""
+    echo "Argumentos:"
+    echo "  novo-branch        Nome da nova branch a ser criada no worktree."
+    echo "  branch-origin      Branch base (local ou origin/<branch>) usada como ponto de partida."
+    echo "  diretorio-origem   Caminho para o repositório git existente."
+    echo "  -i                 Abre um shell interativo no worktree criado."
+    echo ""
+    echo "Exemplos:"
+    echo "  mkworktree feature/x master ."
+    echo "  mkworktree fix-123 develop ~/Workspaces/projeto"
+    exit 1
+}
+
+INTERACTIVE=false
+while getopts ":i" option; do
+    case "$option" in
+        i) INTERACTIVE=true ;;
+        *) usage ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+[ $# -lt 3 ] && usage
+
+NEW_BRANCH="$1"
+ORIGIN_BRANCH="$2"
+SOURCE="$3"
+
+if [ ! -d "$SOURCE" ]; then
+    echo "Erro: diretório de origem '$SOURCE' não existe."
+    exit 1
+fi
+
+if ! git -C "$SOURCE" rev-parse --git-dir > /dev/null 2>&1; then
+    echo "Erro: '$SOURCE' não é um repositório git."
+    exit 1
+fi
+
+SOURCE_ABS=$(cd "$SOURCE" && pwd)
+SOURCE_NAME=$(basename "$SOURCE_ABS")
+SAFE_BRANCH=$(echo "$NEW_BRANCH" | sed 's/[^a-zA-Z0-9._-]/-/g; s/--*/-/g; s/^-//; s/-$//')
+TARGET="$WORKTREE_ROOT/${SOURCE_NAME}-${SAFE_BRANCH}"
+
+if git -C "$SOURCE_ABS" show-ref --verify --quiet "refs/heads/$NEW_BRANCH"; then
+    echo "Erro: branch '$NEW_BRANCH' já existe localmente."
+    exit 1
+fi
+
+if [ -e "$TARGET" ]; then
+    echo "Erro: destino '$TARGET' já existe."
+    exit 1
+fi
+
+if git -C "$SOURCE_ABS" show-ref --verify --quiet "refs/heads/$ORIGIN_BRANCH"; then
+    START_POINT="$ORIGIN_BRANCH"
+elif git -C "$SOURCE_ABS" show-ref --verify --quiet "refs/remotes/origin/$ORIGIN_BRANCH"; then
+    START_POINT="origin/$ORIGIN_BRANCH"
+else
+    echo "Erro: branch base '$ORIGIN_BRANCH' não existe (nem local nem em origin)."
+    exit 1
+fi
+
+mkdir -p "$(dirname "$TARGET")"
+
+echo "Criando worktree:"
+echo "  Origem:        $SOURCE_ABS"
+echo "  Branch base:   $START_POINT"
+echo "  Nova branch:   $NEW_BRANCH"
+echo "  Destino:       $TARGET"
+echo ""
+
+git -C "$SOURCE_ABS" worktree add "$TARGET" -b "$NEW_BRANCH" "$START_POINT"
+
+echo ""
+echo "Copiando arquivos e diretórios não versionados (untracked/ignorados)..."
+
+COPIED=0
+
+while IFS= read -r -d '' path; do
+    rel="${path%/}"
+    dest="$TARGET/$rel"
+    mkdir -p "$(dirname "$dest")"
+    cp -a "$SOURCE_ABS/$rel" "$dest"
+    echo "  copiado: $rel"
+    COPIED=$((COPIED + 1))
+done < <(git -C "$SOURCE_ABS" ls-files --others --directory -z)
+
+echo ""
+echo "Itens copiados: $COPIED"
+echo ""
+echo "Concluído. Worktree criado em: $TARGET"
+
+if [ "$INTERACTIVE" = true ]; then
+    cd "$TARGET"
+    exec "${SHELL:-/bin/bash}" -i
+fi

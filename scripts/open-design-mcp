@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="${OPEN_DESIGN_REPO:-$HOME/Workspaces/open-design}"
+data_dir="${OPEN_DESIGN_DATA_DIR:-$HOME/Apps/open-design/data}"
+cli="$repo/apps/daemon/dist/cli.js"
+
+if [ ! -f "$cli" ]; then
+  echo "Open Design CLI is not built. Run: update-open-design" >&2
+  exit 1
+fi
+
+mkdir -p "$data_dir"
+export OD_DATA_DIR="$data_dir"
+
+exec node "$cli" mcp --daemon-url "${OPEN_DESIGN_DAEMON_URL:-http://127.0.0.1:7456}"

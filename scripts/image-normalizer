@@ -1,0 +1,967 @@
+#!/usr/bin/env python3
+
+import argparse
+import base64
+import binascii
+from collections import defaultdict
+import html
+import math
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import zlib
+
+DEFAULT_BASE_COLOR = "auto"
+DEFAULT_THRESHOLD = "10%"
+DEFAULT_SMOOTH_EDGES = "8%"
+DEFAULT_SPILL_SUPPRESSION = "100%"
+DEFAULT_FLATTEN_COLORS = "0"
+DEFAULT_DENOISE_SIZE = "0"
+DEFAULT_OUTPUT_FORMAT = "png"
+DEFAULT_COLOR_BLEND = "0"
+DEFAULT_EDGE_FEATHER = "0"
+DEFAULT_SIZES = ""
+DEFAULT_PADDING = "0"
+
+
+def parse_color(value):
+    color = value.strip().lower()
+    if color == "auto":
+        return None
+    named = {
+        "black": (0, 0, 0),
+        "white": (255, 255, 255),
+        "red": (255, 0, 0),
+        "green": (0, 255, 0),
+        "blue": (0, 0, 255),
+        "magenta": (255, 0, 255),
+    }
+    if color in named:
+        return named[color]
+    if color.startswith("#"):
+        color = color[1:]
+    elif color.startswith("0x"):
+        color = color[2:]
+    if len(color) == 3 and all(c in "0123456789abcdef" for c in color):
+        return tuple(int(c * 2, 16) for c in color)
+    if len(color) == 6 and all(c in "0123456789abcdef" for c in color):
+        return tuple(int(color[i : i + 2], 16) for i in (0, 2, 4))
+    if "," in color:
+        parts = [p.strip() for p in color.split(",")]
+        if len(parts) == 3:
+            rgb = tuple(int(p) for p in parts)
+            if all(0 <= c <= 255 for c in rgb):
+                return rgb
+    raise ValueError("cor invalida; use #00ff00 ou 0,255,0")
+
+
+def parse_output_format(value):
+    output_format = value.strip().lower()
+    if output_format == "jpg":
+        output_format = "jpeg"
+    if output_format not in ("png", "svg", "jpeg"):
+        raise ValueError("--format aceita png, svg ou jpeg")
+    return output_format
+
+
+def parse_alpha(value):
+    alpha = float(value)
+    if alpha <= 1:
+        alpha *= 255
+    return max(0, min(255, round(alpha)))
+
+
+def parse_background(value):
+    text = value.strip().lower()
+    if text == "none":
+        return None
+    if text.startswith("rgba(") and text.endswith(")"):
+        parts = [part.strip() for part in text[5:-1].split(",")]
+        if len(parts) == 4:
+            r, g, b = (int(part) for part in parts[:3])
+            a = parse_alpha(parts[3])
+            if all(0 <= channel <= 255 for channel in (r, g, b)):
+                return r, g, b, a
+    if text.startswith("rgb(") and text.endswith(")"):
+        parts = [part.strip() for part in text[4:-1].split(",")]
+        if len(parts) == 3:
+            r, g, b = (int(part) for part in parts)
+            if all(0 <= channel <= 255 for channel in (r, g, b)):
+                return r, g, b, 255
+    if "," in text:
+        parts = [part.strip() for part in text.split(",")]
+        if len(parts) in (3, 4):
+            r, g, b = (int(part) for part in parts[:3])
+            a = parse_alpha(parts[3]) if len(parts) == 4 else 255
+            if all(0 <= channel <= 255 for channel in (r, g, b)):
+                return r, g, b, a
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) == 3 and all(c in "0123456789abcdef" for c in text):
+        return tuple(int(c * 2, 16) for c in text) + (255,)
+    if len(text) == 4 and all(c in "0123456789abcdef" for c in text):
+        return tuple(int(c * 2, 16) for c in text)
+    if len(text) == 6 and all(c in "0123456789abcdef" for c in text):
+        return tuple(int(text[i : i + 2], 16) for i in (0, 2, 4)) + (255,)
+    if len(text) == 8 and all(c in "0123456789abcdef" for c in text):
+        return tuple(int(text[i : i + 2], 16) for i in (0, 2, 4, 6))
+    raise ValueError("--bg aceita none, #rrggbb, #rrggbbaa, rgb() ou rgba()")
+
+
+def dominant_color(pixels):
+    buckets = defaultdict(lambda: [0, 0, 0, 0])
+    for r, g, b, a in pixels:
+        if a == 0:
+            continue
+        bucket = (r // 8, g // 8, b // 8)
+        data = buckets[bucket]
+        data[0] += 1
+        data[1] += r
+        data[2] += g
+        data[3] += b
+    if not buckets:
+        return parse_color("#00ff00")
+    _, data = max(buckets.items(), key=lambda item: item[1][0])
+    count, red, green, blue = data
+    return (round(red / count), round(green / count), round(blue / count))
+
+
+def detect_base_pillow(image):
+    width, height = image.size
+    pixels = image.load()
+    edge = []
+    for x in range(width):
+        edge.append(pixels[x, 0])
+        if height > 1:
+            edge.append(pixels[x, height - 1])
+    for y in range(1, max(1, height - 1)):
+        edge.append(pixels[0, y])
+        if width > 1:
+            edge.append(pixels[width - 1, y])
+    return dominant_color(edge)
+
+
+def detect_base_rows(width, height, rows, bpp):
+    edge = []
+
+    def add_pixel(row, index):
+        r, g, b = row[index], row[index + 1], row[index + 2]
+        a = row[index + 3] if bpp == 4 else 255
+        edge.append((r, g, b, a))
+
+    for x in range(width):
+        index = x * bpp
+        add_pixel(rows[0], index)
+        if height > 1:
+            add_pixel(rows[height - 1], index)
+    for y in range(1, max(1, height - 1)):
+        add_pixel(rows[y], 0)
+        if width > 1:
+            add_pixel(rows[y], (width - 1) * bpp)
+    return dominant_color(edge)
+
+
+def parse_ratio(value, name):
+    text = str(value).strip()
+    if text.endswith("%"):
+        ratio = float(text[:-1]) / 100
+    else:
+        ratio = float(text)
+        if ratio > 1:
+            ratio /= 100
+    if ratio < 0:
+        raise ValueError(f"{name} nao pode ser negativo")
+    return ratio
+
+
+def parse_non_negative_int(value, name):
+    number = int(value)
+    if number < 0:
+        raise ValueError(f"{name} nao pode ser negativo")
+    return number
+
+
+def parse_pixel_radius(value, name):
+    text = str(value).strip().lower()
+    if text.endswith("px"):
+        text = text[:-2]
+    radius = round(float(text))
+    if radius < 0:
+        raise ValueError(f"{name} nao pode ser negativo")
+    return radius
+
+
+def parse_dimension(value, name):
+    number = int(value)
+    if number <= 0:
+        raise ValueError(f"{name} deve ser positivo")
+    return number
+
+
+def parse_dimensions(value, name):
+    return [parse_dimension(part.strip(), name) for part in str(value).split(",") if part.strip()]
+
+
+def get_image_dimensions(input_file):
+    try:
+        result = subprocess.run(
+            [magick_path(), "identify", "-format", "%w %h", input_file],
+            capture_output=True, text=True, check=True,
+        )
+        w, h = result.stdout.strip().split()
+        return int(w), int(h)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    try:
+        from PIL import Image
+        with Image.open(input_file) as img:
+            return img.size
+    except ModuleNotFoundError:
+        pass
+    try:
+        w, h, _, _ = read_png(input_file)
+        return w, h
+    except ValueError:
+        raise ValueError("nao foi possivel determinar as dimensoes da imagem")
+
+
+def build_proportional_sizes(orig_w, orig_h, widths, heights):
+    sizes = []
+    if widths:
+        for w in widths:
+            h = max(1, round(orig_h * w / orig_w))
+            sizes.append((w, h))
+    if heights:
+        for h in heights:
+            w = max(1, round(orig_w * h / orig_h))
+            sizes.append((w, h))
+    return sizes
+
+
+def parse_sizes(value):
+    sizes = []
+    for raw_size in str(value).split(","):
+        size = raw_size.strip().lower()
+        if not size:
+            continue
+        if "x" in size:
+            parts = size.split("x")
+            if len(parts) != 2 or not parts[0] or not parts[1]:
+                raise ValueError("--sizes aceita valores como 1024x512,256")
+            width, height = (int(part) for part in parts)
+        else:
+            width = height = int(size)
+        if width <= 0 or height <= 0:
+            raise ValueError("--sizes aceita apenas dimensoes positivas")
+        sizes.append((width, height))
+    return sizes
+
+
+def parse_padding(value):
+    parts = [part.strip() for part in str(value).split(",")]
+    if len(parts) == 1:
+        top = right = bottom = left = int(parts[0])
+    elif len(parts) == 4:
+        top, right, bottom, left = (int(part) for part in parts)
+    else:
+        raise ValueError("--padding aceita 10 ou 10,5,10,5")
+    if any(part < 0 for part in (top, right, bottom, left)):
+        raise ValueError("--padding nao pode ser negativo")
+    return top, right, bottom, left
+
+
+def output_path(input_path, output_format):
+    base = os.path.splitext(os.path.basename(input_path))[0]
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    folder = os.path.dirname(input_path)
+    name = f"{base}-{stamp}.{output_format}"
+    return os.path.join(folder, name) if folder else name
+
+
+def sized_output_paths(input_path, output_file, output_format, sizes):
+    source = output_file or input_path
+    folder = os.path.dirname(source)
+    base = os.path.splitext(os.path.basename(source))[0]
+    return [
+        (os.path.join(folder, f"{base}_{width}x{height}.{output_format}") if folder else f"{base}_{width}x{height}.{output_format}", (width, height))
+        for width, height in sizes
+    ]
+
+
+def key_channel(base):
+    key = max(range(3), key=lambda index: base[index])
+    other_max = max(base[index] for index in range(3) if index != key)
+    if base[key] - other_max < 24:
+        return None
+    return key
+
+
+def distance_alpha(r, g, b, a, base, threshold, smooth):
+    distance = math.sqrt(
+        (r - base[0]) * (r - base[0])
+        + (g - base[1]) * (g - base[1])
+        + (b - base[2]) * (b - base[2])
+    )
+    if distance <= threshold:
+        return 0
+    if smooth > 0 and distance <= threshold + smooth:
+        return max(0, min(255, round(a * ((distance - threshold) / smooth))))
+    return a
+
+
+def new_pixel(r, g, b, a, base, threshold, smooth, threshold_ratio, spill):
+    alpha = distance_alpha(r, g, b, a, base, threshold, smooth)
+    key = key_channel(base)
+    if key is None:
+        return r, g, b, alpha
+
+    values = [r, g, b]
+    other_max = max(values[index] for index in range(3) if index != key)
+    dominance = values[key] - other_max
+    if dominance <= 0:
+        return r, g, b, alpha
+
+    floor = max(4, round(24 * (1 - min(threshold_ratio, 0.75))))
+    if dominance > floor:
+        factor = 1 + threshold_ratio * 10
+        alpha = min(alpha, max(0, min(255, round(a - (dominance - floor) * factor))))
+
+    if spill > 0:
+        base_other_max = max(base[index] for index in range(3) if index != key)
+        base_dominance = max(1, base[key] - base_other_max)
+        spill_strength = min(1, spill) * min(1, dominance / max(1, base_dominance * 0.2))
+        values[key] = round(values[key] - dominance * spill_strength)
+
+    return values[0], values[1], values[2], alpha
+
+
+def rows_to_data(rows):
+    data = bytearray()
+    for row in rows:
+        data.extend(row)
+    return data
+
+
+def data_to_rows(data, width, height):
+    stride = width * 4
+    return [bytearray(data[y * stride : (y + 1) * stride]) for y in range(height)]
+
+
+def flatten_color_regions(width, height, data, tolerance, min_region_size):
+    if tolerance <= 0:
+        return data
+
+    total = width * height
+    labels = [-1] * total
+    components = []
+    tolerance2 = tolerance * tolerance
+    alpha_tolerance = max(8, round(tolerance * 2))
+
+    for start in range(total):
+        if labels[start] != -1:
+            continue
+
+        label = len(components)
+        labels[start] = label
+        offset = start * 4
+        seed_r, seed_g, seed_b, seed_a = data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+        stack = [start]
+        count = red = green = blue = alpha = 0
+
+        while stack:
+            index = stack.pop()
+            offset = index * 4
+            r, g, b, a = data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+            count += 1
+            red += r
+            green += g
+            blue += b
+            alpha += a
+            x = index % width
+
+            for neighbor in (index - 1, index + 1, index - width, index + width):
+                if neighbor < 0 or neighbor >= total:
+                    continue
+                if (neighbor == index - 1 and x == 0) or (neighbor == index + 1 and x == width - 1):
+                    continue
+                if labels[neighbor] != -1:
+                    continue
+                offset = neighbor * 4
+                nr, ng, nb, na = data[offset], data[offset + 1], data[offset + 2], data[offset + 3]
+                if abs(na - seed_a) > alpha_tolerance:
+                    continue
+                distance2 = (nr - seed_r) * (nr - seed_r) + (ng - seed_g) * (ng - seed_g) + (nb - seed_b) * (nb - seed_b)
+                if distance2 <= tolerance2:
+                    labels[neighbor] = label
+                    stack.append(neighbor)
+
+        components.append((count, red, green, blue, alpha))
+
+    means = [
+        (round(red / count), round(green / count), round(blue / count), round(alpha / count))
+        for count, red, green, blue, alpha in components
+    ]
+    targets = list(range(len(components)))
+
+    if min_region_size > 1:
+        best_scores = [None] * len(components)
+        for index, label in enumerate(labels):
+            if components[label][0] >= min_region_size:
+                continue
+            x = index % width
+            for neighbor in (index - 1, index + 1, index - width, index + width):
+                if neighbor < 0 or neighbor >= total:
+                    continue
+                if (neighbor == index - 1 and x == 0) or (neighbor == index + 1 and x == width - 1):
+                    continue
+                neighbor_label = labels[neighbor]
+                if neighbor_label == label or components[neighbor_label][0] < min_region_size:
+                    continue
+                r, g, b, a = means[label]
+                nr, ng, nb, na = means[neighbor_label]
+                score = (nr - r) * (nr - r) + (ng - g) * (ng - g) + (nb - b) * (nb - b) + (na - a) * (na - a)
+                if best_scores[label] is None or score < best_scores[label]:
+                    best_scores[label] = score
+                    targets[label] = neighbor_label
+
+    for index, label in enumerate(labels):
+        offset = index * 4
+        data[offset : offset + 4] = bytes(means[targets[label]])
+
+    return data
+
+
+def blend_color_edges(width, height, data, strength):
+    if strength <= 0:
+        return data
+
+    strength = min(1, strength)
+    source = bytes(data)
+    output = bytearray(source)
+    total = width * height
+    boundary_distance2 = 18 * 18
+
+    for index in range(total):
+        offset = index * 4
+        a = source[offset + 3]
+        if a == 0:
+            continue
+
+        x = index % width
+        boundary = False
+        for neighbor in (index - 1, index + 1, index - width, index + width):
+            if neighbor < 0 or neighbor >= total:
+                continue
+            if (neighbor == index - 1 and x == 0) or (neighbor == index + 1 and x == width - 1):
+                continue
+            neighbor_offset = neighbor * 4
+            if source[neighbor_offset + 3] == 0:
+                continue
+            dr = source[neighbor_offset] - source[offset]
+            dg = source[neighbor_offset + 1] - source[offset + 1]
+            db = source[neighbor_offset + 2] - source[offset + 2]
+            if dr * dr + dg * dg + db * db > boundary_distance2:
+                boundary = True
+                break
+        if not boundary:
+            continue
+
+        y = index // width
+        red = green = blue = weight = 0
+        for yy in range(max(0, y - 1), min(height, y + 2)):
+            for xx in range(max(0, x - 1), min(width, x + 2)):
+                neighbor_offset = (yy * width + xx) * 4
+                neighbor_alpha = source[neighbor_offset + 3]
+                if neighbor_alpha == 0:
+                    continue
+                red += source[neighbor_offset] * neighbor_alpha
+                green += source[neighbor_offset + 1] * neighbor_alpha
+                blue += source[neighbor_offset + 2] * neighbor_alpha
+                weight += neighbor_alpha
+        if weight == 0:
+            continue
+
+        output[offset] = round(source[offset] * (1 - strength) + (red / weight) * strength)
+        output[offset + 1] = round(source[offset + 1] * (1 - strength) + (green / weight) * strength)
+        output[offset + 2] = round(source[offset + 2] * (1 - strength) + (blue / weight) * strength)
+
+    return output
+
+
+def feather_alpha_edges(width, height, data, radius):
+    if radius <= 0:
+        return data
+
+    source = bytes(data)
+    output = bytearray(source)
+
+    for y in range(height):
+        for x in range(width):
+            offset = (y * width + x) * 4
+            alpha = source[offset + 3]
+            min_alpha = max_alpha = alpha
+            alpha_sum = count = 0
+            red = green = blue = weight = 0
+
+            for yy in range(max(0, y - radius), min(height, y + radius + 1)):
+                for xx in range(max(0, x - radius), min(width, x + radius + 1)):
+                    neighbor_offset = (yy * width + xx) * 4
+                    neighbor_alpha = source[neighbor_offset + 3]
+                    min_alpha = min(min_alpha, neighbor_alpha)
+                    max_alpha = max(max_alpha, neighbor_alpha)
+                    alpha_sum += neighbor_alpha
+                    count += 1
+                    if neighbor_alpha > 0:
+                        red += source[neighbor_offset] * neighbor_alpha
+                        green += source[neighbor_offset + 1] * neighbor_alpha
+                        blue += source[neighbor_offset + 2] * neighbor_alpha
+                        weight += neighbor_alpha
+
+            if min_alpha == max_alpha:
+                continue
+
+            new_alpha = round(alpha_sum / count)
+            if alpha == 0 and new_alpha > 0 and weight > 0:
+                output[offset] = round(red / weight)
+                output[offset + 1] = round(green / weight)
+                output[offset + 2] = round(blue / weight)
+            output[offset + 3] = new_alpha
+
+    return output
+
+
+def remove_with_pillow(input_file, output_file, base, threshold, smooth, threshold_ratio, spill, flatten, denoise_size):
+    from PIL import Image
+
+    with Image.open(input_file) as image:
+        rgba = image.convert("RGBA")
+    if base is None:
+        base = detect_base_pillow(rgba)
+    data = bytearray()
+    for r, g, b, a in rgba.getdata():
+        data.extend(new_pixel(r, g, b, a, base, threshold, smooth, threshold_ratio, spill))
+    data = flatten_color_regions(rgba.width, rgba.height, data, flatten, denoise_size)
+    rgba.frombytes(bytes(data))
+    rgba.save(output_file, "PNG")
+
+
+def paeth(a, b, c):
+    p = a + b - c
+    pa = abs(p - a)
+    pb = abs(p - b)
+    pc = abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    if pb <= pc:
+        return b
+    return c
+
+
+def png_chunk(kind, data):
+    body = kind + data
+    return struct.pack(">I", len(data)) + body + struct.pack(">I", binascii.crc32(body) & 0xFFFFFFFF)
+
+
+def read_png(input_file):
+    with open(input_file, "rb") as file:
+        if file.read(8) != b"\x89PNG\r\n\x1a\n":
+            raise ValueError("Pillow nao instalado; fallback aceita apenas PNG")
+        width = height = bit_depth = color_type = interlace = None
+        idat = []
+        while True:
+            raw_len = file.read(4)
+            if len(raw_len) != 4:
+                raise ValueError("PNG incompleto")
+            length = struct.unpack(">I", raw_len)[0]
+            kind = file.read(4)
+            data = file.read(length)
+            file.read(4)
+            if kind == b"IHDR":
+                width, height, bit_depth, color_type, _, _, interlace = struct.unpack(">IIBBBBB", data)
+            elif kind == b"IDAT":
+                idat.append(data)
+            elif kind == b"IEND":
+                break
+        if bit_depth != 8 or color_type not in (2, 6) or interlace != 0:
+            raise ValueError("fallback PNG aceita apenas RGB/RGBA 8-bit sem interlace")
+        return width, height, color_type, zlib.decompress(b"".join(idat))
+
+
+def unfilter_rows(width, height, color_type, payload):
+    bpp = 4 if color_type == 6 else 3
+    stride = width * bpp
+    rows = []
+    offset = 0
+    previous = bytearray(stride)
+    for _ in range(height):
+        filter_type = payload[offset]
+        offset += 1
+        row = bytearray(payload[offset : offset + stride])
+        offset += stride
+        for i in range(stride):
+            left = row[i - bpp] if i >= bpp else 0
+            up = previous[i]
+            up_left = previous[i - bpp] if i >= bpp else 0
+            if filter_type == 1:
+                row[i] = (row[i] + left) & 0xFF
+            elif filter_type == 2:
+                row[i] = (row[i] + up) & 0xFF
+            elif filter_type == 3:
+                row[i] = (row[i] + ((left + up) // 2)) & 0xFF
+            elif filter_type == 4:
+                row[i] = (row[i] + paeth(left, up, up_left)) & 0xFF
+            elif filter_type != 0:
+                raise ValueError("PNG com filtro invalido")
+        rows.append(row)
+        previous = row
+    return rows
+
+
+def write_png(output_file, width, height, rows):
+    payload = bytearray()
+    for row in rows:
+        payload.append(0)
+        payload.extend(row)
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+    with open(output_file, "wb") as file:
+        file.write(b"\x89PNG\r\n\x1a\n")
+        file.write(png_chunk(b"IHDR", ihdr))
+        file.write(png_chunk(b"IDAT", zlib.compress(bytes(payload), 9)))
+        file.write(png_chunk(b"IEND", b""))
+
+
+def trim_rows(width, height, rows):
+    left, top, right, bottom = width, height, -1, -1
+    for y, row in enumerate(rows):
+        for x in range(width):
+            if row[x * 4 + 3] == 0:
+                continue
+            left = min(left, x)
+            top = min(top, y)
+            right = max(right, x)
+            bottom = max(bottom, y)
+    if right == -1:
+        return 1, 1, [bytearray((0, 0, 0, 0))]
+    cropped = []
+    for y in range(top, bottom + 1):
+        start = left * 4
+        end = (right + 1) * 4
+        cropped.append(bytearray(rows[y][start:end]))
+    return right - left + 1, bottom - top + 1, cropped
+
+
+def pad_rows(width, height, rows, padding, background):
+    top, right, bottom, left = padding
+    if top == right == bottom == left == 0:
+        return width, height, rows
+    fill = background or (0, 0, 0, 0)
+    new_width = width + left + right
+    new_height = height + top + bottom
+    padded = [bytearray(fill * new_width) for _ in range(new_height)]
+    for y, row in enumerate(rows):
+        start = left * 4
+        padded[top + y][start : start + len(row)] = row
+    return new_width, new_height, padded
+
+
+def composite_channel(source, alpha, background, background_alpha, output_alpha):
+    if output_alpha == 0:
+        return 0
+    source_part = source * alpha
+    background_part = background * background_alpha * (255 - alpha) / 255
+    return round((source_part + background_part) / output_alpha)
+
+
+def apply_background(rows, background, force_opaque):
+    br, bg, bb, ba = background
+    output_rows = []
+    for row in rows:
+        output = bytearray()
+        for i in range(0, len(row), 4):
+            r, g, b, a = row[i], row[i + 1], row[i + 2], row[i + 3]
+            out_a = round(a + ba * (255 - a) / 255)
+            out_r = composite_channel(r, a, br, ba, out_a)
+            out_g = composite_channel(g, a, bg, ba, out_a)
+            out_b = composite_channel(b, a, bb, ba, out_a)
+            if force_opaque and out_a < 255:
+                out_r = composite_channel(out_r, out_a, 255, 255, 255)
+                out_g = composite_channel(out_g, out_a, 255, 255, 255)
+                out_b = composite_channel(out_b, out_a, 255, 255, 255)
+                out_a = 255
+            output.extend((out_r, out_g, out_b, out_a))
+        output_rows.append(output)
+    return output_rows
+
+
+def magick_path():
+    path = shutil.which("magick")
+    if not path:
+        raise ValueError("ImageMagick nao encontrado; necessario para este formato")
+    return path
+
+
+def run_magick(*args):
+    subprocess.run((magick_path(),) + args, check=True)
+
+
+def convert_input_to_png(input_file, output_file):
+    run_magick(input_file, "png32:" + output_file)
+
+
+def write_jpeg(png_file, output_file):
+    run_magick(png_file, "-background", "white", "-alpha", "remove", "-alpha", "off", output_file)
+
+
+def color_to_magick(background):
+    if background is None:
+        return "none"
+    return f"rgba({background[0]},{background[1]},{background[2]},{background[3] / 255:.6f})"
+
+
+def resize_png(input_file, output_file, width, height, background):
+    run_magick(
+        input_file,
+        "-resize",
+        f"{width}x{height}",
+        "-background",
+        color_to_magick(background),
+        "-gravity",
+        "center",
+        "-extent",
+        f"{width}x{height}",
+        "png32:" + output_file,
+    )
+
+
+def write_svg(svg_file, width, height, png_file):
+    with open(png_file, "rb") as file:
+        encoded = base64.b64encode(file.read()).decode("ascii")
+    with open(svg_file, "w", encoding="utf-8") as file:
+        file.write(
+            '<svg xmlns="http://www.w3.org/2000/svg" '
+            f'width="{width}" height="{height}" viewBox="0 0 {width} {height}">'
+            f'<image width="{width}" height="{height}" href="data:image/png;base64,{html.escape(encoded)}"/>'
+            "</svg>\n"
+        )
+
+
+def write_formatted_png(png_file, output_file, output_format, size, source_width, source_height, background):
+    resized_png = None
+    source = png_file
+    width, height = source_width, source_height
+    if size is not None:
+        width, height = size
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
+            resized_png = file.name
+        resize_png(png_file, resized_png, width, height, background)
+        source = resized_png
+
+    try:
+        if output_format == "png":
+            shutil.copyfile(source, output_file)
+        elif output_format == "jpeg":
+            write_jpeg(source, output_file)
+        else:
+            write_svg(output_file, width, height, source)
+    finally:
+        if resized_png:
+            try:
+                os.unlink(resized_png)
+            except OSError:
+                pass
+
+
+def remove_png_fallback(input_file, output_file, base, threshold, smooth, threshold_ratio, spill, flatten, denoise_size):
+    width, height, color_type, payload = read_png(input_file)
+    source_rows = unfilter_rows(width, height, color_type, payload)
+    bpp = 4 if color_type == 6 else 3
+    if base is None:
+        base = detect_base_rows(width, height, source_rows, bpp)
+    rows = []
+    for source in source_rows:
+        row = bytearray()
+        for i in range(0, len(source), bpp):
+            r, g, b = source[i], source[i + 1], source[i + 2]
+            a = source[i + 3] if bpp == 4 else 255
+            row.extend(new_pixel(r, g, b, a, base, threshold, smooth, threshold_ratio, spill))
+        rows.append(row)
+    if flatten > 0:
+        rows = data_to_rows(flatten_color_regions(width, height, rows_to_data(rows), flatten, denoise_size), width, height)
+    write_png(output_file, width, height, rows)
+
+
+def post_process_output(input_file, outputs, output_format, background, trim, padding, color_blend, edge_feather, proportional=None):
+    width, height, color_type, payload = read_png(input_file)
+    rows = unfilter_rows(width, height, color_type, payload)
+    if color_type == 2:
+        rows = [bytearray(value for i in range(0, len(row), 3) for value in (*row[i : i + 3], 255)) for row in rows]
+
+    if color_blend > 0 or edge_feather > 0:
+        data = rows_to_data(rows)
+        data = blend_color_edges(width, height, data, color_blend)
+        data = feather_alpha_edges(width, height, data, edge_feather)
+        rows = data_to_rows(data, width, height)
+
+    if trim:
+        width, height, rows = trim_rows(width, height, rows)
+    width, height, rows = pad_rows(width, height, rows, padding, background)
+    if background is not None:
+        rows = apply_background(rows, background, output_format == "jpeg")
+    elif output_format == "jpeg":
+        rows = apply_background(rows, (255, 255, 255, 255), True)
+
+    if proportional:
+        targets = proportional["targets"]
+        if proportional["mode"] == "widths":
+            sizes = [(w, max(1, round(height * w / width))) for w in targets]
+        else:
+            sizes = [(max(1, round(width * h / height)), h) for h in targets]
+        source = proportional.get("output_file") or input_file
+        outputs = sized_output_paths(input_file, source, output_format, sizes)
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as file:
+        png_file = file.name
+    try:
+        write_png(png_file, width, height, rows)
+        for output_file, size in outputs:
+            write_formatted_png(png_file, output_file, output_format, size, width, height, background)
+    finally:
+        try:
+            os.unlink(png_file)
+        except OSError:
+            pass
+    return [output_file for output_file, _ in outputs]
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="image-normalizer",
+        description="Normaliza imagem removendo chroma key, fundo, bordas e exportando formatos.",
+    )
+    parser.add_argument("image", metavar="endereco-da-imagem")
+    parser.add_argument("-c", "--base-color", default=DEFAULT_BASE_COLOR, help="default: auto")
+    parser.add_argument(
+        "-t",
+        "--color-similar-threshold",
+        default=DEFAULT_THRESHOLD,
+        help="percentual/fator de similaridade; default: 10%%",
+    )
+    parser.add_argument(
+        "--smoth-edges",
+        "--smooth-edges",
+        dest="smooth_edges",
+        default=DEFAULT_SMOOTH_EDGES,
+        help="faixa extra de suavizacao; default: 8%%",
+    )
+    parser.add_argument(
+        "--spill-suppression",
+        default=DEFAULT_SPILL_SUPPRESSION,
+        help="reduz a cor do chroma nas bordas; default: 100%%",
+    )
+    parser.add_argument(
+        "--flatten-colors",
+        default=DEFAULT_FLATTEN_COLORS,
+        help="une regioes adjacentes com cores similares; default: 0",
+    )
+    parser.add_argument(
+        "--denoise-size",
+        default=DEFAULT_DENOISE_SIZE,
+        help="absorve regioes menores que N pixels; default: 0",
+    )
+    parser.add_argument("--format", default=DEFAULT_OUTPUT_FORMAT, help="png, svg ou jpeg; default: png")
+    parser.add_argument("--bg", help="none, hex, rgb() ou rgba(); default: none (jpeg: #fff)")
+    parser.add_argument("--trim", action="store_true", help="corta bordas transparentes")
+    parser.add_argument("--color-blend", default=DEFAULT_COLOR_BLEND, help="mistura cores em fronteiras; default: 0")
+    parser.add_argument("--edge-feather", default=DEFAULT_EDGE_FEATHER, help="suaviza alpha nas bordas em pixels; default: 0")
+    parser.add_argument("--sizes", default=DEFAULT_SIZES, help="salva copias redimensionadas: 1024x512,256")
+    parser.add_argument("--width", type=int, help="redimensiona proporcionalmente para largura alvo")
+    parser.add_argument("--height", type=int, help="redimensiona proporcionalmente para altura alvo")
+    parser.add_argument("--widths", help="largura(s) alvo separadas por virgula; proporcional")
+    parser.add_argument("--heights", help="altura(s) alvo separadas por virgula; proporcional")
+    parser.add_argument("--padding", default=DEFAULT_PADDING, help="padding: 10 ou 10,5,10,5; default: 0")
+    parser.add_argument("-o", "--output", help="arquivo de saida")
+    args = parser.parse_args()
+
+    input_file = args.image
+    if not os.path.isfile(input_file):
+        print(f"Erro: arquivo nao encontrado: {input_file}", file=sys.stderr)
+        return 1
+
+    try:
+        output_format = parse_output_format(args.format)
+        background = parse_background(args.bg or ("#fff" if output_format == "jpeg" else "none"))
+        base = parse_color(args.base_color)
+        max_distance = math.sqrt(3 * 255 * 255)
+        threshold_ratio = parse_ratio(args.color_similar_threshold, "--color-similar-threshold")
+        threshold = threshold_ratio * max_distance
+        smooth = parse_ratio(args.smooth_edges, "--smoth-edges") * max_distance
+        spill = parse_ratio(args.spill_suppression, "--spill-suppression")
+        flatten = parse_ratio(args.flatten_colors, "--flatten-colors") * max_distance
+        denoise_size = parse_non_negative_int(args.denoise_size, "--denoise-size")
+        color_blend = parse_ratio(args.color_blend, "--color-blend")
+        edge_feather = parse_pixel_radius(args.edge_feather, "--edge-feather")
+        resize_mode_count = sum([
+            1 if args.sizes else 0,
+            1 if args.width or args.height else 0,
+            1 if args.widths or args.heights else 0,
+        ])
+        if resize_mode_count > 1:
+            print("Erro: use apenas um modo de redimensionamento (--sizes, --width/--height, --widths/--heights)", file=sys.stderr)
+            return 1
+
+        proportional = None
+        sizes = []
+        if args.sizes:
+            sizes = parse_sizes(args.sizes)
+        elif args.widths or args.heights:
+            mode = "widths" if args.widths else "heights"
+            targets = parse_dimensions(args.widths or args.heights, f"--{mode}")
+            proportional = {"mode": mode, "targets": targets, "output_file": args.output}
+        elif args.width or args.height:
+            if args.width and args.height:
+                sizes = [(args.width, args.height)]
+            else:
+                mode = "widths" if args.width else "heights"
+                targets = [args.width or args.height]
+                proportional = {"mode": mode, "targets": targets, "output_file": args.output}
+
+        padding = parse_padding(args.padding)
+    except (TypeError, ValueError) as exc:
+        print(f"Erro: {exc}", file=sys.stderr)
+        return 1
+
+    outputs = []
+    if sizes:
+        outputs = sized_output_paths(input_file, args.output, output_format, sizes)
+    elif not proportional:
+        outputs = [(args.output or output_path(input_file, output_format), None)]
+    with tempfile.TemporaryDirectory() as folder:
+        normalized_png = os.path.join(folder, "normalized.png")
+        try:
+            try:
+                remove_with_pillow(input_file, normalized_png, base, threshold, smooth, threshold_ratio, spill, flatten, denoise_size)
+            except ModuleNotFoundError:
+                try:
+                    remove_png_fallback(input_file, normalized_png, base, threshold, smooth, threshold_ratio, spill, flatten, denoise_size)
+                except ValueError:
+                    converted_input = os.path.join(folder, "input.png")
+                    convert_input_to_png(input_file, converted_input)
+                    remove_png_fallback(converted_input, normalized_png, base, threshold, smooth, threshold_ratio, spill, flatten, denoise_size)
+            output_files = post_process_output(normalized_png, outputs, output_format, background, args.trim, padding, color_blend, edge_feather, proportional)
+        except subprocess.CalledProcessError as exc:
+            print(f"Erro: ImageMagick falhou: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"Erro: {exc}", file=sys.stderr)
+            return 1
+
+    print("\n".join(output_files))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
